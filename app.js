@@ -7,28 +7,138 @@ const GROUPS = [
   {id:'legs', name:'Legs', color:'#3ddc97', icon:'<path d="M9 3l-1 8 2 10M15 3l1 8-2 10M8 11h8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>'},
   {id:'shoulders', name:'Shoulders', color:'#b77dff', icon:'<circle cx="12" cy="7" r="3" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M4 19c0-4 2-7 4-8h8c2 1 4 4 4 8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>'}
 ];
-const ex = (name, sets, min, max) => ({name, sets, min, max});
-const DEFAULTS = {
-  back: [ex('Lat Pulldown',3,8,12), ex('Barbell Row',4,6,8), ex('Seated Cable Row',3,8,12), ex('Pull-Up',3,6,10), ex('Single-Arm DB Row',3,8,12), ex('Rear Delt Fly',3,12,15), ex('Straight-Arm Pulldown',3,12,15)],
-  chest: [ex('Bench Press',4,6,8), ex('Incline DB Press',3,8,12), ex('Machine Chest Press',3,8,12), ex('Cable Fly',3,12,15), ex('Dips',3,8,12), ex('Pec Deck',3,12,15)],
-  legs: [ex('Back Squat',4,6,8), ex('Romanian Deadlift',3,8,10), ex('Leg Press',3,10,12), ex('Leg Curl',3,10,15), ex('Leg Extension',3,12,15), ex('Walking Lunge',3,10,12), ex('Calf Raise',4,12,15)],
-  shoulders: [ex('Overhead Press',4,6,8), ex('Seated DB Press',3,8,12), ex('Lateral Raise',4,12,15), ex('Face Pull',3,12,15), ex('Reverse Pec Deck',3,12,15), ex('Front Raise',3,10,12), ex('DB Shrug',3,10,12)]
+const APP_VERSION = '3.0';
+const PHASE_DAYS = 28;
+const PHASES = {
+  bulk: {id:'bulk', name:'Bulking', short:'Bulk', color:'#ff6b35', icon:'💪',
+    tagline:'Build strength & size', points:['Heavy compounds, 4–5 sets × 4–8 reps','Longer rest: 2–4 min','Add weight when you hit the top of the range'],
+    fallback:[4, 6, 8, 150]},
+  cut: {id:'cut', name:'Cutting', short:'Cut', color:'#2ec4ff', icon:'🔥',
+    tagline:'Lean out, keep muscle', points:['3–4 sets × 10–15 reps, more machines & isolation','Short rest: 45–75 s','Superset isolation moves to keep the pace up'],
+    fallback:[3, 10, 15, 60]}
+};
+const FOCUS_META = {
+  back: [{id:'upper', name:'Upper', desc:'Lats, traps & rear delts'}, {id:'mid', name:'Mid', desc:'Rhomboids & mid-traps · rows'}, {id:'lower', name:'Lower', desc:'Erectors & posterior chain'}],
+  chest: [{id:'upper', name:'Upper', desc:'Upper chest · incline work'}, {id:'mid', name:'Mid', desc:'Flat pressing & flyes'}, {id:'lower', name:'Lower', desc:'Decline pressing & dips'}],
+  legs: [{id:'quads', name:'Quads', desc:'Squats, presses & extensions'}, {id:'hamstrings', name:'Hamstrings', desc:'Hinges & curls'}, {id:'glutes', name:'Glutes', desc:'Thrusts, split squats & abduction'}, {id:'calves', name:'Calves', desc:'Standing & seated raises'}],
+  shoulders: [{id:'front', name:'Front', desc:'Front delts · pressing'}, {id:'side', name:'Side', desc:'Side delts · width'}, {id:'rear', name:'Rear', desc:'Rear delts & upper back'}]
+};
+/* Default plans: 'Name|sets|minReps|maxReps|restSeconds' per phase -> group -> focus */
+const PLAN_DEFS = {
+  bulk: {
+    back: {upper:['Pull-Up|4|5|8|180','Lat Pulldown|4|6|8|150','Wide-Grip Seated Row|4|6|8|150','Barbell Shrug|4|6|8|120','Rear Delt Fly|3|10|12|90'],
+      mid:['Barbell Row|5|5|8|180','Chest-Supported T-Bar Row|4|6|8|150','Seated Cable Row|4|6|8|120','Single-Arm DB Row|4|6|8|120'],
+      lower:['Deadlift|5|3|5|240','Rack Pull|4|4|6|180','Good Morning|4|6|8|150','Back Extension|3|8|10|90']},
+    chest: {upper:['Incline Bench Press|5|4|6|180','Incline DB Press|4|6|8|150','Landmine Press|3|6|8|120','Incline Machine Press|3|6|8|120'],
+      mid:['Bench Press|5|4|6|180','DB Bench Press|4|6|8|150','Machine Chest Press|3|6|8|120','Cable Fly|3|8|10|90'],
+      lower:['Decline Bench Press|5|4|6|180','Dips|4|6|8|150','Decline DB Press|4|6|8|120','Bench Press|3|5|6|180']},
+    legs: {quads:['Back Squat|5|4|6|240','Hack Squat|4|6|8|180','Leg Press|4|6|8|150','Bulgarian Split Squat|3|6|8|120'],
+      hamstrings:['Romanian Deadlift|4|5|8|180','Good Morning|4|6|8|150','Leg Curl|4|6|8|90','Nordic Curl|3|4|6|120'],
+      glutes:['Hip Thrust|5|5|8|150','Bulgarian Split Squat|4|6|8|120','Romanian Deadlift|4|6|8|150','Walking Lunge|3|8|10|90'],
+      calves:['Calf Raise|5|6|10|90','Seated Calf Raise|4|8|10|90','Leg Press Calf Raise|4|8|12|90']},
+    shoulders: {front:['Overhead Press|5|4|6|180','Seated DB Press|4|6|8|150','Arnold Press|3|6|8|120','Front Raise|3|8|10|90'],
+      side:['Seated DB Press|4|6|8|150','Upright Row|4|6|8|120','Lateral Raise|4|8|12|90','Cable Lateral Raise|3|8|12|90'],
+      rear:['Rear Delt Fly|4|8|12|90','Face Pull|4|8|12|90','Reverse Pec Deck|3|8|12|90','DB Shrug|4|6|8|120']}
+  },
+  cut: {
+    back: {upper:['Lat Pulldown|4|10|12|75','Wide-Grip Seated Row|3|12|15|60','Straight-Arm Pulldown|3|12|15|45','Rear Delt Fly|3|15|20|45','Face Pull|3|15|20|45'],
+      mid:['Seated Cable Row|4|10|12|75','Single-Arm DB Row|3|10|12|60','Chest-Supported T-Bar Row|3|10|12|75','Machine Row|3|12|15|60','Straight-Arm Pulldown|3|12|15|45'],
+      lower:['Back Extension|4|12|15|60','Good Morning|3|10|12|75','Rack Pull|3|8|10|90','Reverse Hyper|3|12|15|60','Seated Cable Row|3|12|15|60']},
+    chest: {upper:['Incline DB Press|4|10|12|75','Incline Machine Press|3|12|15|60','Low-to-High Cable Fly|3|15|20|45','Landmine Press|3|12|15|60'],
+      mid:['Machine Chest Press|4|10|12|75','DB Bench Press|3|10|12|75','Pec Deck|3|15|20|45','Cable Fly|3|15|20|45','Push-Up|3|15|20|45'],
+      lower:['Dips|4|10|15|60','Decline DB Press|3|10|12|75','High-to-Low Cable Fly|3|15|20|45','Machine Chest Press|3|12|15|60']},
+    legs: {quads:['Leg Press|4|12|15|75','Hack Squat|3|10|12|90','Leg Extension|4|15|20|45','Walking Lunge|3|12|15|60','Goblet Squat|3|12|15|60'],
+      hamstrings:['Leg Curl|4|12|15|45','Seated Leg Curl|3|12|15|45','Romanian Deadlift|3|10|12|75','Nordic Curl|3|6|10|60'],
+      glutes:['Hip Thrust|4|10|15|60','Cable Kickback|3|15|20|45','Hip Abduction|3|15|20|45','Walking Lunge|3|12|15|60','Bulgarian Split Squat|3|10|12|60'],
+      calves:['Calf Raise|4|15|20|45','Seated Calf Raise|4|15|20|45','Single-Leg Calf Raise|3|12|15|30','Leg Press Calf Raise|3|15|20|45']},
+    shoulders: {front:['Seated DB Press|4|10|12|75','Arnold Press|3|10|12|60','Machine Shoulder Press|3|12|15|60','Front Raise|3|12|15|45'],
+      side:['Lateral Raise|4|15|20|45','Cable Lateral Raise|3|12|15|45','Machine Lateral Raise|3|15|20|45','Upright Row|3|12|15|60'],
+      rear:['Reverse Pec Deck|4|15|20|45','Face Pull|3|15|20|45','Rear Delt Cable Fly|3|15|20|45','Rear Delt Fly|3|15|20|45','DB Shrug|3|12|15|45']}
+  }
+};
+/* Exercise names shipped in v1 (a v1 default the user deleted is not re-added during migration) */
+const V1_NAMES = {
+  back: ['Lat Pulldown','Barbell Row','Seated Cable Row','Pull-Up','Single-Arm DB Row','Rear Delt Fly','Straight-Arm Pulldown'],
+  chest: ['Bench Press','Incline DB Press','Machine Chest Press','Cable Fly','Dips','Pec Deck'],
+  legs: ['Back Squat','Romanian Deadlift','Leg Press','Leg Curl','Leg Extension','Walking Lunge','Calf Raise'],
+  shoulders: ['Overhead Press','Seated DB Press','Lateral Raise','Face Pull','Reverse Pec Deck','Front Raise','DB Shrug']
 };
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-function defaultExercises(){
-  const out = {};
-  for (const g of GROUPS) out[g.id] = DEFAULTS[g.id].map(e => ({id: uid(), ...e}));
-  return out;
+const lc = s => String(s).trim().toLowerCase();
+const parseDef = d => { const [name, sets, min, max, rest] = d.split('|'); return {name, sets: +sets, min: +min, max: +max, rest: +rest}; };
+/** fallback targets for an exercise with no plan entry in a phase (custom ones keep their own sets/reps) */
+function fallbackItem(phase, ex){
+  const [sets, min, max, rest] = PHASES[phase].fallback;
+  return ex && ex.sets ? {exId: ex.id, sets: ex.sets, min: ex.min, max: ex.max, rest: ex.rest || rest} : {exId: ex.id, sets, min, max, rest};
+}
+/** Build {focusId: [items], all: [items]} for one phase+group, reusing pool exercises by name. */
+function buildPlan(phase, gid, pool, skipNames){
+  const plan = {};
+  const getEx = name => {
+    let e = pool.find(x => lc(x.name) === lc(name));
+    if (!e) {
+      if (skipNames && skipNames.has(lc(name))) return null;
+      e = {id: uid(), name}; pool.push(e);
+    }
+    return e;
+  };
+  for (const f of FOCUS_META[gid]) {
+    plan[f.id] = [];
+    for (const d of PLAN_DEFS[phase][gid][f.id]) {
+      const p = parseDef(d), e = getEx(p.name);
+      if (e && !plan[f.id].some(i => i.exId === e.id)) plan[f.id].push({exId: e.id, sets: p.sets, min: p.min, max: p.max, rest: p.rest});
+    }
+  }
+  plan.all = [];
+  for (const f of FOCUS_META[gid]) for (const it of plan[f.id]) if (!plan.all.some(i => i.exId === it.exId)) plan.all.push({...it});
+  return plan;
+}
+/** make sure every pool exercise appears in each phase's 'All' list */
+function syncAll(d){
+  for (const ph of Object.keys(PHASES)) for (const g of GROUPS) {
+    const plan = d.plans[ph][g.id], ids = new Set(d.exercises[g.id].map(x => x.id));
+    for (const k of Object.keys(plan)) plan[k] = plan[k].filter(i => ids.has(i.exId));
+    for (const e of d.exercises[g.id]) if (!plan.all.some(i => i.exId === e.id)) plan.all.push(fallbackItem(ph, e));
+    for (const f of FOCUS_META[g.id]) if (!Array.isArray(plan[f.id])) plan[f.id] = [];
+  }
+}
+function freshDb(){
+  const d = {version: 3, exercises: {}, plans: {}, phase: null, sessions: []};
+  for (const g of GROUPS) d.exercises[g.id] = [];
+  for (const ph of Object.keys(PHASES)) { d.plans[ph] = {}; for (const g of GROUPS) d.plans[ph][g.id] = buildPlan(ph, g.id, d.exercises[g.id]); }
+  return d;
+}
+/** Upgrade older data in place. Never drops sessions or exercises. */
+function migrate(d){
+  d.exercises = d.exercises || {};
+  for (const g of GROUPS) if (!Array.isArray(d.exercises[g.id])) d.exercises[g.id] = [];
+  if (!d.version || d.version < 3 || !d.plans) {
+    // v1 defaults the user removed shouldn't come back
+    const removed = {};
+    for (const g of GROUPS) removed[g.id] = new Set(V1_NAMES[g.id].map(lc).filter(n => !d.exercises[g.id].some(x => lc(x.name) === n)));
+    d.plans = {};
+    for (const ph of Object.keys(PHASES)) { d.plans[ph] = {}; for (const g of GROUPS) d.plans[ph][g.id] = buildPlan(ph, g.id, d.exercises[g.id], removed[g.id]); }
+    delete d.focuses;
+    for (const s of d.sessions) { if (!('focus' in s)) s.focus = null; if (!('phase' in s)) s.phase = null; } // unlabeled history
+    if (!('phase' in d)) d.phase = null;
+    d.version = 3;
+  }
+  for (const ph of Object.keys(PHASES)) { d.plans[ph] = d.plans[ph] || {}; for (const g of GROUPS) if (!d.plans[ph][g.id]) d.plans[ph][g.id] = buildPlan(ph, g.id, d.exercises[g.id]); }
+  syncAll(d);
+  return d;
 }
 function load(){
   try {
-    const d = JSON.parse(localStorage.getItem(STORE_KEY));
-    if (d && d.exercises && Array.isArray(d.sessions)) {
-      for (const g of GROUPS) if (!Array.isArray(d.exercises[g.id])) d.exercises[g.id] = [];
-      return d;
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) {
+      const d = JSON.parse(raw);
+      if (d && d.exercises && Array.isArray(d.sessions)) {
+        if (!d.version || d.version < 3) localStorage.setItem(STORE_KEY + '.backup-v' + (d.version || 1), raw); // safety copy
+        return migrate(d);
+      }
     }
-  } catch (e) {}
-  return {version:1, exercises: defaultExercises(), sessions: []};
+  } catch (e) { console.warn('load failed', e); }
+  return freshDb();
 }
 let db = load();
 function save(){ localStorage.setItem(STORE_KEY, JSON.stringify(db)); }
@@ -60,7 +170,35 @@ function findExercise(exId){
   for (const g of GROUPS) { const e = db.exercises[g.id].find(x => x.id === exId); if (e) return {ex: e, group: g.id}; }
   return null;
 }
-function getSession(date, group){ return db.sessions.find(s => s.date === date && s.group === group); }
+const fk = f => f || '';
+/* ----- phase ----- */
+const curPhase = () => db.phase && PHASES[db.phase.id] ? db.phase.id : 'bulk';
+function phaseDays(){ return db.phase ? Math.round((parseDate(todayStr()) - parseDate(db.phase.start)) / 864e5) : 0; }
+const needsPhase = () => !db.phase || !PHASES[db.phase.id] || phaseDays() >= PHASE_DAYS;
+function phaseLabel(){
+  if (!db.phase) return 'Pick a phase';
+  const d = phaseDays();
+  return `${PHASES[db.phase.id].short} · week ${Math.min(4, Math.floor(d / 7) + 1)} of 4`;
+}
+const restLabel = s => !s ? "" : s >= 90 ? (s % 60 ? `${Math.floor(s / 60)}:${pad(s % 60)} min` : `${s / 60} min`) : `${s}s`;
+function getSession(date, group, focus, phase){ return db.sessions.find(s => s.date === date && s.group === group && fk(s.focus) === fk(focus) && fk(s.phase) === fk(phase)); }
+function focusName(gid, fid, fallback){
+  if (!fid) return '';
+  if (fid === 'all') return 'All';
+  const f = FOCUS_META[gid].find(x => x.id === fid);
+  return f ? f.name : (fallback || fid);
+}
+function sessionLabel(s){ const g = groupOf(s.group), f = focusName(s.group, s.focus, s.focusName); return g.name + (f ? ' · ' + f : ''); }
+const phasePill = ph => ph && PHASES[ph] ? `<span class="pill phase" style="--c:${PHASES[ph].color}">${PHASES[ph].short}</span>` : '';
+const planItems = (gid, fid, phase) => db.plans[phase || curPhase()][gid][!fid || !db.plans[phase || curPhase()][gid][fid] ? 'all' : fid];
+/** exercises visible in a focus for a phase, merged with that phase+focus's targets */
+function focusList(gid, fid, phase){
+  const pool = db.exercises[gid];
+  return planItems(gid, fid, phase).map(it => {
+    const e = pool.find(x => x.id === it.exId);
+    return e ? {id: e.id, name: e.name, sets: it.sets, min: it.min, max: it.max, rest: it.rest, item: it, ex: e} : null;
+  }).filter(Boolean);
+}
 function sortedSessions(){ return [...db.sessions].sort((a, b) => b.date.localeCompare(a.date) || (b.updated || 0) - (a.updated || 0)); }
 /** history entries for an exercise, oldest first: [{date, sets}] */
 function exerciseHistory(exId, name){
@@ -71,8 +209,9 @@ function exerciseHistory(exId, name){
     }
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }
-function lastEntry(exId, beforeDate){
-  const h = exerciseHistory(exId).filter(h => h.date < beforeDate);
+/** most recent logged entry for an exercise up to `date`, excluding a given session (the one being edited) */
+function lastEntry(exId, date, excludeSessionId){
+  const h = exerciseHistory(exId).filter(h => excludeSessionId !== undefined ? (h.date <= date && h.sessionId !== excludeSessionId) : h.date < date);
   return h[h.length - 1];
 }
 const setsStr = sets => sets.map(s => `${fmtNum(s.w)}×${s.r}`).join(', ');
@@ -102,7 +241,7 @@ function setHeader(title, subtitle = '', action = ''){
 function render(){
   const v = cur(), el = $('#view');
   el.className = 'fade-in'; void el.offsetWidth;
-  ({home: renderHome, group: renderGroup, log: renderLog, journal: renderJournal, session: renderSession,
+  ({phase: renderPhase, home: renderHome, focus: renderFocus, group: renderGroup, log: renderLog, journal: renderJournal, session: renderSession,
     progress: renderProgress, settings: renderSettings})[v.v](el, v);
 }
 
@@ -115,7 +254,9 @@ function renderHome(el){
   const thisWeek = db.sessions.filter(s => s.date >= wk);
   const days = new Set(db.sessions.map(s => s.date)).size;
   const vol = thisWeek.reduce((a, s) => a + sessionVolume(s), 0);
+  const ph = PHASES[curPhase()];
   el.innerHTML = `
+    <button class="phase-chip" id="phaseChip" style="--c:${ph.color}"><span class="pc-ico">${ph.icon}</span><span class="pc-main"><b>${phaseLabel()}</b><span>${db.phase ? ph.tagline + ' · ' + Math.max(0, PHASE_DAYS - phaseDays()) + ' days left' : ''}</span></span><span class="pc-chg">Change</span></button>
     <div class="hero">
       <div class="stat"><div class="v">${new Set(thisWeek.map(s => s.date)).size}</div><div class="l">Days this week</div></div>
       <div class="stat"><div class="v">${vol >= 10000 ? fmtNum(vol/1000) + 'k' : fmtNum(vol)}</div><div class="l">Lbs lifted (7d)</div></div>
@@ -128,20 +269,51 @@ function renderHome(el){
         return `<button class="group-card" data-g="${g.id}" style="--c:${g.color}">
           <div class="glow"></div><div class="gicon"><svg viewBox="0 0 24 24">${g.icon}</svg></div>
           <div class="gname">${g.name}</div>
-          <div class="gmeta">${last ? 'Last: ' + daysAgo(last.date) : db.exercises[g.id].length + ' exercises'}</div>
+          <div class="gmeta">${last ? (focusName(g.id, last.focus, last.focusName) ? `<b>${esc(focusName(g.id, last.focus, last.focusName))}</b> · ` : 'Last: ') + daysAgo(last.date) : FOCUS_META[g.id].length + ' focuses'}</div>
         </button>`;}).join('')}
     </div>`;
-  el.querySelectorAll('.group-card').forEach(b => b.addEventListener('click', () => push({v:'group', g: b.dataset.g, date: todayStr()})));
+  el.querySelectorAll('.group-card').forEach(b => b.addEventListener('click', () => push({v:'focus', g: b.dataset.g, date: todayStr()})));
+  $('#phaseChip').onclick = () => push({v:'phase'});
+}
+
+/* ---------- Workout: Focus picker ---------- */
+function renderFocus(el, v){
+  const g = groupOf(v.g), ph = PHASES[curPhase()];
+  setHeader(g.name, `${ph.short} · ` + (v.date === todayStr() ? "today's focus" : fmtDay(v.date)));
+  const lastOf = fid => sortedSessions().find(s => s.group === g.id && fk(s.focus) === fid);
+  const fs = FOCUS_META[g.id];
+  // suggest the focus trained least recently (never trained first)
+  let suggest = null, oldest = '9999';
+  for (const f of fs) { const l = lastOf(f.id); const d = l ? l.date : '0000'; if (d < oldest) { oldest = d; suggest = f.id; } }
+  const card = (fid, name, desc, count) => {
+    const l = lastOf(fid);
+    return `<button class="focus-card" data-f="${fid}" style="--c:${g.color}">
+      <div class="fbar"></div>
+      <div class="main"><div class="name">${esc(name)} ${fid === suggest ? '<span class="pill sugg">Up next</span>' : ''}</div>
+        <div class="meta">${esc(desc)}</div>
+        <div class="meta2">${count} exercise${count === 1 ? '' : 's'} · ${l ? 'last ' + daysAgo(l.date) : 'not trained yet'}</div></div>
+      <svg class="chev" width="20" height="20" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+    </button>`;
+  };
+  el.innerHTML = `
+    <div class="section-title">Pick a focus</div>
+    <div class="list">${fs.map(f => card(f.id, f.name, f.desc || '', focusList(g.id, f.id).length)).join('')}</div>
+    <div class="section-title">Or</div>
+    <div class="list">${card('all', 'All ' + g.name, 'Every ' + g.name.toLowerCase() + ' exercise, incl. your custom ones', db.exercises[g.id].length)}</div>`;
+  el.querySelectorAll('.focus-card').forEach(b => b.onclick = () => push({v:'group', g: g.id, focus: b.dataset.f, date: v.date}));
 }
 
 /* ---------- Workout: Group (exercise list) ---------- */
 function renderGroup(el, v){
-  const g = groupOf(v.g), list = db.exercises[g.id];
-  const session = getSession(v.date, g.id);
+  const phase = v.phase === undefined ? curPhase() : v.phase, tp = phase || curPhase();
+  const g = groupOf(v.g), list = focusList(g.id, v.focus, tp);
+  const fname = focusName(g.id, v.focus);
+  const session = getSession(v.date, g.id, v.focus, phase);
   const doneIds = new Set(session ? session.entries.filter(e => validSets(e.sets).length).map(e => e.exId) : []);
-  setHeader(g.name, v.date === todayStr() ? `Today · ${doneIds.size}/${list.length} done` : fmtDay(v.date),
+  setHeader(fname && fname !== 'All' ? `${g.name} · ${fname}` : g.name, `${PHASES[tp].short} · ` + (v.date === todayStr() ? 'Today' : fmtDay(v.date)) + ` · ${doneIds.size}/${list.length} done`,
     `<button class="text-btn" id="editBtn">${v.editing ? 'Done' : 'Edit'}</button>`);
   el.innerHTML = `
+    <div class="phase-tip" style="--c:${PHASES[tp].color}">${PHASES[tp].icon} <b>${PHASES[tp].name}:</b> ${PHASES[tp].points[1]}</div>
     <div class="list">
       ${list.map((e, i) => {
         const last = lastEntry(e.id, v.date + '~');
@@ -149,81 +321,110 @@ function renderGroup(el, v){
         return `<div class="row" role="button" data-id="${e.id}" style="--c:${g.color}">
           <div class="badge-num">${i + 1}</div>
           <div class="main"><div class="name">${esc(e.name)}</div>
-            <div class="meta">${e.sets} sets × ${repsLabel(e)} reps${last && !done ? ` · last ${fmtNum(Math.max(...last.sets.map(s => s.w)))} lb` : ''}</div></div>
+            <div class="meta">${e.sets} × ${repsLabel(e)} · rest ${restLabel(e.rest)}${last && !done ? ` · last ${fmtNum(Math.max(...last.sets.map(s => s.w)))} lb` : ''}</div></div>
           ${v.editing
             ? `<button class="mini-btn" data-act="up" data-id="${e.id}" aria-label="Move up">↑</button><button class="mini-btn" data-act="edit" data-id="${e.id}">Edit</button>`
             : done ? `<span class="pill done">✓ Done</span>` : `<svg class="chev" width="20" height="20" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>`}
         </div>`;}).join('')}
     </div>
     <div class="btn-row"><button class="btn small" id="addEx">＋ Add exercise</button></div>
-    ${session && !v.editing ? `<div class="btn-row"><button class="btn small" id="viewSession">View today's session</button></div>` : ''}`;
+    ${!list.length ? `<div class="empty" style="padding:30px 10px"><p>No exercises in this focus yet. Add one above.</p></div>` : ''}
+    ${session && !v.editing ? `<div class="btn-row"><button class="btn small" id="viewSession">View ${v.date === todayStr() ? "today's" : 'this'} session</button></div>` : ''}`;
   $('#editBtn').onclick = () => { v.editing = !v.editing; render(); };
-  $('#addEx').onclick = () => exerciseSheet(g.id, null);
+  $('#addEx').onclick = () => exerciseSheet(g.id, null, v.focus, tp);
   if ($('#viewSession')) $('#viewSession').onclick = () => { switchTab('journal'); push({v:'session', id: session.id}); };
   el.querySelectorAll('.row').forEach(r => r.addEventListener('click', ev => {
     const act = ev.target.closest('[data-act]');
     if (act) {
       ev.stopPropagation();
       const idx = list.findIndex(x => x.id === act.dataset.id);
-      if (act.dataset.act === 'edit') exerciseSheet(g.id, list[idx]);
-      if (act.dataset.act === 'up' && idx > 0) { [list[idx-1], list[idx]] = [list[idx], list[idx-1]]; save(); render(); }
+      if (act.dataset.act === 'edit') exerciseSheet(g.id, list[idx], v.focus, tp);
+      if (act.dataset.act === 'up' && idx > 0) {
+        const arr = planItems(g.id, v.focus, tp);
+        const a = arr.findIndex(x => x.exId === list[idx - 1].id), b = arr.findIndex(x => x.exId === list[idx].id);
+        if (a >= 0 && b >= 0) { [arr[a], arr[b]] = [arr[b], arr[a]]; save(); render(); }
+      }
       return;
     }
-    if (v.editing) { exerciseSheet(g.id, list.find(x => x.id === r.dataset.id)); return; }
-    push({v:'log', g: g.id, exId: r.dataset.id, date: v.date});
+    if (v.editing) { exerciseSheet(g.id, list.find(x => x.id === r.dataset.id), v.focus, tp); return; }
+    push({v:'log', g: g.id, focus: v.focus, phase, exId: r.dataset.id, date: v.date});
   }));
 }
 
 /* ---------- Workout: Log an exercise ---------- */
 function renderLog(el, v){
   const g = groupOf(v.g);
+  const phase = v.phase === undefined ? curPhase() : v.phase; // session's phase (null = unlabeled old session)
+  const tphase = phase || curPhase();                            // phase whose targets we show
   const found = findExercise(v.exId);
-  const session = getSession(v.date, v.g);
+  const session = getSession(v.date, v.g, v.focus, phase);
   const existing = session && session.entries.find(e => e.exId === v.exId);
-  const e = found ? found.ex : {name: existing ? existing.name : 'Exercise', sets: 3, min: 8, max: 12};
-  const last = lastEntry(v.exId, v.date);
+  const inPlan = focusList(v.g, v.focus, tphase).find(x => x.id === v.exId) || focusList(v.g, 'all', tphase).find(x => x.id === v.exId);
+  const e = inPlan || (found ? {...fallbackItem(tphase, found.ex), name: found.ex.name} : {name: existing ? existing.name : 'Exercise', ...fallbackItem(tphase, {id: v.exId})});
+  const last = lastEntry(v.exId, v.date, session ? session.id : null);
+  const lastSession = last && db.sessions.find(s => s.id === last.sessionId);
   if (!v.draft) {
-    v.draft = existing
-      ? existing.sets.map(s => ({w: s.w || '', r: s.r || ''}))
-      : Array.from({length: e.sets}, (_, i) => ({w: '', r: ''}));
+    if (existing) v.draft = existing.sets.map(s => ({w: s.w || '', r: s.r || '', pre: false}));
+    else {
+      const n = Math.max(1, e.sets);
+      v.draft = Array.from({length: n}, (_, i) => {
+        const ls = last && (last.sets[i] || null);
+        return ls ? {w: ls.w, r: ls.r, pre: true} : {w: '', r: '', pre: false};
+      });
+    }
   }
-  setHeader(e.name, `${g.name} · ${fmtDay(v.date)}`);
+  const fname = focusName(v.g, v.focus);
+  setHeader(e.name, `${phase ? PHASES[phase].short + ' · ' : ''}${g.name}${fname && fname !== 'All' ? ' · ' + fname : ''} · ${fmtDay(v.date)}`);
   const hintFor = i => last && last.sets[i] ? `last ${fmtNum(last.sets[i].w)}×${last.sets[i].r}` : '';
-  el.style.setProperty('--c', g.color);
+  const anyPre = v.draft.some(d => d.pre);
+  const lastFocus = lastSession ? [lastSession.phase && PHASES[lastSession.phase] ? PHASES[lastSession.phase].short : '', focusName(lastSession.group, lastSession.focus, lastSession.focusName)].filter(Boolean).join(' · ') : '';
   el.innerHTML = `
-    <div class="target" style="--c:${g.color}">
-      <div><div class="lbl">Target</div><div class="big">${e.sets} × ${repsLabel(e)}</div><div class="lbl" style="margin-top:2px">sets × reps</div></div>
-      <div class="last">${last ? `Last time · ${fmtDay(last.date)}<b>${esc(setsStr(last.sets))}</b>` : 'First time logging<b>Go get it 💪</b>'}</div>
-    </div>
+    ${last ? `
+    <div class="last-card" style="--c:${g.color}">
+      <div class="lc-head"><span class="lc-title">Last time</span><span class="lc-date">${fmtDay(last.date, true)}${/^(Today|Yesterday)$/.test(fmtDay(last.date)) ? '' : ' · ' + daysAgo(last.date)}</span></div>
+      <div class="lc-sets">${last.sets.map((s, i) => `
+        <div class="lc-set"><div class="k">Set ${i + 1}</div><div class="w">${fmtNum(s.w)}<small> lb</small></div><div class="r">× ${s.r} reps</div></div>`).join('')}
+      </div>
+      <div class="lc-foot">Top ${fmtNum(Math.max(...last.sets.map(s => s.w)))} lb · e1RM ${fmtNum(Math.round(Math.max(...last.sets.map(s => e1rm(s.w, s.r)))))} · ${fmtNum(last.sets.reduce((a, s) => a + s.w * s.r, 0))} lb vol${lastFocus ? ' · ' + esc(lastFocus) : ''}</div>
+    </div>` : `
+    <div class="last-card first" style="--c:${g.color}"><div class="lc-head"><span class="lc-title">First time</span></div>
+      <div class="lc-first">No history for this exercise yet. Today sets your baseline 💪</div></div>`}
+    <div class="target-row" style="--c:${PHASES[tphase].color}"><div><span class="tr-lbl">Target · ${PHASES[tphase].short}</span><b>${e.sets} sets × ${repsLabel(e)} reps</b></div><div class="rest"><span class="tr-lbl">Rest</span><b>⏱ ${restLabel(e.rest)}</b></div></div>
     <div class="sets-head"><div>Set</div><div style="text-align:center">Weight</div><div style="text-align:center">Reps</div><div></div></div>
     <div id="sets">
       ${v.draft.map((s, i) => `
       <div class="set-row ${s.w !== '' ? 'filled' : ''} ${hintFor(i) ? 'has-hint' : ''}" style="--c:${g.color}">
         <div class="sn">${i + 1}</div>
-        <div class="field"><input type="number" inputmode="decimal" step="any" min="0" data-i="${i}" data-k="w" value="${s.w}" placeholder="${last && last.sets[i] ? fmtNum(last.sets[i].w) : '0'}"><span class="unit">lb</span>${hintFor(i) ? `<span class="hint">${hintFor(i)}</span>` : ''}</div>
-        <div class="field"><input type="number" inputmode="numeric" min="0" step="1" data-i="${i}" data-k="r" value="${s.r}" placeholder="${e.max}"><span class="unit">reps</span></div>
+        <div class="field"><input type="number" inputmode="decimal" step="any" min="0" data-i="${i}" data-k="w" value="${s.w}" class="${s.pre ? 'prefilled' : ''}" placeholder="0"><span class="unit">lb</span>${hintFor(i) ? `<span class="hint">${hintFor(i)}</span>` : ''}</div>
+        <div class="field"><input type="number" inputmode="numeric" min="0" step="1" data-i="${i}" data-k="r" value="${s.r}" class="${s.pre ? 'prefilled' : ''}" placeholder="${e.max}"><span class="unit">reps</span></div>
         <button class="del-set" data-del="${i}" aria-label="Remove set"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></button>
       </div>`).join('')}
     </div>
-    <div class="btn-row"><button class="btn small" id="addSet">＋ Add set</button>${last ? `<button class="btn small" id="copyLast">Copy last</button>` : ''}</div>
+    ${anyPre ? `<p class="note pre-note"><span class="pre-dot"></span>Dimmed values are prefilled from last time. Tap to change, or save as-is.</p>` : ''}
+    <div class="btn-row"><button class="btn small" id="addSet">＋ Add set</button>${anyPre ? `<button class="btn small" id="clearPre">Clear prefill</button>` : last ? `<button class="btn small" id="copyLast">Copy last</button>` : ''}</div>
     <div class="date-chip"><span>Workout date</span><input type="date" id="dateIn" value="${v.date}" max="${todayStr()}"></div>
     <div class="btn-row" style="margin-top:18px"><button class="btn primary" id="saveBtn">${existing ? 'Update' : 'Save'} ${esc(e.name)}</button></div>
     ${existing ? `<div class="btn-row"><button class="btn small danger" id="delEntry">Delete this entry</button></div>` : ''}
-    <p class="note">Leave reps blank to use the target (${e.max}). Empty sets are skipped.</p>`;
-  el.querySelectorAll('input[data-i]').forEach(inp => inp.addEventListener('input', () => {
-    v.draft[+inp.dataset.i][inp.dataset.k] = inp.value;
-    inp.closest('.set-row').classList.toggle('filled', v.draft[+inp.dataset.i].w !== '');
-  }));
+    <p class="note">Blank reps count as the target (${e.max}). Sets with no weight or reps are skipped.</p>`;
+  el.querySelectorAll('input[data-i]').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const d = v.draft[+inp.dataset.i]; d[inp.dataset.k] = inp.value; d.pre = false;
+      inp.closest('.set-row').querySelectorAll('input').forEach(x => x.classList.remove('prefilled'));
+      inp.closest('.set-row').classList.toggle('filled', d.w !== '');
+    });
+    inp.addEventListener('focus', () => { if (inp.classList.contains('prefilled')) inp.select(); });
+  });
   el.querySelectorAll('[data-del]').forEach(b => b.onclick = () => { v.draft.splice(+b.dataset.del, 1); render(); });
-  $('#addSet').onclick = () => { const p = v.draft[v.draft.length - 1]; v.draft.push({w: p ? p.w : '', r: p ? p.r : ''}); render(); };
-  if ($('#copyLast')) $('#copyLast').onclick = () => { v.draft = last.sets.map(s => ({w: s.w, r: s.r})); render(); };
+  $('#addSet').onclick = () => { const p = v.draft[v.draft.length - 1]; v.draft.push({w: p ? p.w : '', r: p ? p.r : '', pre: false}); render(); };
+  if ($('#copyLast')) $('#copyLast').onclick = () => { v.draft = last.sets.map(s => ({w: s.w, r: s.r, pre: true})); render(); };
+  if ($('#clearPre')) $('#clearPre').onclick = () => { v.draft = v.draft.map(d => d.pre ? {w: '', r: '', pre: false} : d); render(); };
   $('#dateIn').onchange = ev => { if (ev.target.value) { v.date = ev.target.value; v.draft = null; render(); } };
   $('#saveBtn').onclick = () => {
     const sets = v.draft.map(s => ({w: parseFloat(s.w) || 0, r: s.r === '' ? (s.w !== '' ? e.max : 0) : (parseInt(s.r) || 0)}))
       .filter(s => s.w > 0 || s.r > 0);
     if (!sets.length) { toast('Enter a weight for at least one set'); return; }
-    let s = getSession(v.date, v.g);
-    if (!s) { s = {id: uid(), date: v.date, group: v.g, entries: []}; db.sessions.push(s); }
+    let s = getSession(v.date, v.g, v.focus, phase);
+    if (!s) { s = {id: uid(), date: v.date, group: v.g, focus: v.focus || null, focusName: focusName(v.g, v.focus), phase: phase || null, entries: []}; db.sessions.push(s); }
     const idx = s.entries.findIndex(x => x.exId === v.exId);
     const entry = {exId: v.exId, name: e.name, sets};
     if (idx >= 0) s.entries[idx] = entry; else s.entries.push(entry);
@@ -249,35 +450,99 @@ function removeEntry(session, exId){
 function openSheet(html){ $('#sheet').innerHTML = '<div class="grab"></div>' + html; $('#sheetWrap').classList.remove('hidden'); }
 function closeSheet(){ $('#sheetWrap').classList.add('hidden'); $('#sheet').innerHTML = ''; }
 $('#sheetBackdrop').addEventListener('click', closeSheet);
-function exerciseSheet(groupId, e){
-  openSheet(`<h2>${e ? 'Edit exercise' : 'New exercise'}</h2>
-    <label class="form-label">Name</label><input class="text-input" id="exName" value="${e ? esc(e.name) : ''}" placeholder="e.g. T-Bar Row" autocomplete="off">
-    <div class="three" style="margin-top:4px">
-      <div><label class="form-label">Sets</label><input class="text-input" id="exSets" type="number" inputmode="numeric" value="${e ? e.sets : 3}"></div>
-      <div><label class="form-label">Min reps</label><input class="text-input" id="exMin" type="number" inputmode="numeric" value="${e ? e.min : 8}"></div>
-      <div><label class="form-label">Max reps</label><input class="text-input" id="exMax" type="number" inputmode="numeric" value="${e ? e.max : 12}"></div>
+function exerciseSheet(groupId, e, focusId, phase){
+  phase = phase || curPhase();
+  const g = groupOf(groupId), fs = FOCUS_META[groupId], plan = db.plans[phase][groupId], P = PHASES[phase];
+  const fid = focusId && plan[focusId] ? focusId : 'all';
+  const inFocus = fid !== 'all' ? fs.find(f => f.id === fid) : null;
+  const member = new Set(e ? fs.filter(f => plan[f.id].some(i => i.exId === e.id)).map(f => f.id) : (inFocus ? [inFocus.id] : []));
+  const others = !e ? db.exercises[groupId].filter(x => !plan[fid].some(i => i.exId === x.id)) : [];
+  const def = e || {sets: P.fallback[0], min: P.fallback[1], max: P.fallback[2], rest: P.fallback[3]};
+  openSheet(`<h2>${e ? 'Edit exercise' : 'Add exercise'}</h2>
+    <div class="sheet-ctx" style="--c:${P.color}">${P.icon} ${P.name} · ${esc(g.name)} · ${inFocus ? esc(inFocus.name) : 'All'}</div>
+    ${others.length ? `<label class="form-label">Add an existing ${esc(g.name.toLowerCase())} exercise</label>
+      <div class="chips">${others.map(x => `<button class="chip" data-add="${x.id}">＋ ${esc(x.name)}</button>`).join('')}</div>
+      <label class="form-label" style="margin-top:20px">Or create a new one</label>` : `<label class="form-label">Name</label>`}
+    <input class="text-input" id="exName" value="${e ? esc(e.name) : ''}" placeholder="e.g. T-Bar Row" autocomplete="off">
+    <div class="four" style="margin-top:4px">
+      <div><label class="form-label">Sets</label><input class="text-input" id="exSets" type="number" inputmode="numeric" value="${def.sets}"></div>
+      <div><label class="form-label">Min reps</label><input class="text-input" id="exMin" type="number" inputmode="numeric" value="${def.min}"></div>
+      <div><label class="form-label">Max reps</label><input class="text-input" id="exMax" type="number" inputmode="numeric" value="${def.max}"></div>
+      <div><label class="form-label">Rest (s)</label><input class="text-input" id="exRest" type="number" inputmode="numeric" value="${def.rest || ''}"></div>
     </div>
+    <label class="form-label">In ${P.short} focuses</label>
+    <div class="chips" id="focusChips">${fs.map(f => `<button class="chip toggle ${member.has(f.id) ? 'on' : ''}" data-f="${f.id}" style="--c:${g.color}">${esc(f.name)}</button>`).join('')}<span class="chip static">All ✓</span></div>
     <div class="btn-row" style="margin-top:20px"><button class="btn primary" id="exSave">${e ? 'Save changes' : 'Add exercise'}</button></div>
-    ${e ? `<div class="btn-row"><button class="btn small danger" id="exDel">Remove from ${groupOf(groupId).name}</button></div>` : ''}
+    ${e && inFocus ? `<div class="btn-row"><button class="btn small" id="exRemoveFocus">Remove from ${esc(inFocus.name)} (${P.short})</button></div>` : ''}
+    ${e ? `<div class="btn-row"><button class="btn small danger" id="exDel">Delete exercise from ${esc(g.name)}</button></div>` : ''}
     <div class="btn-row"><button class="btn small" id="exCancel">Cancel</button></div>
-    ${e ? '<p class="note">Removing an exercise keeps its past entries in your Journal.</p>' : ''}`);
-  if (!e) setTimeout(() => $('#exName').focus(), 250);
+    <p class="note">Sets, reps and rest apply to ${P.name} · ${esc(g.name)} · ${inFocus ? esc(inFocus.name) : 'All'} only.${e ? ' Deleting an exercise keeps its past entries in your Journal.' : ''}</p>`);
   $('#exCancel').onclick = closeSheet;
+  $('#sheet').querySelectorAll('.chip.toggle').forEach(c => c.onclick = () => c.classList.toggle('on'));
+  $('#sheet').querySelectorAll('[data-add]').forEach(c => c.onclick = () => {
+    const src = plan.all.find(i => i.exId === c.dataset.add) || fallbackItem(phase, {id: c.dataset.add});
+    plan[fid].push({...src, exId: c.dataset.add}); save(); closeSheet(); render(); toast('Added to ' + (inFocus ? inFocus.name : 'All'));
+  });
   $('#exSave').onclick = () => {
     const name = $('#exName').value.trim();
     if (!name) { toast('Give it a name'); return; }
-    const sets = Math.max(1, Math.min(20, parseInt($('#exSets').value) || 3));
-    let min = Math.max(1, parseInt($('#exMin').value) || 8), max = Math.max(1, parseInt($('#exMax').value) || min);
+    const sets = Math.max(1, Math.min(20, parseInt($('#exSets').value) || def.sets));
+    let min = Math.max(1, parseInt($('#exMin').value) || def.min), max = Math.max(1, parseInt($('#exMax').value) || min);
     if (max < min) [min, max] = [max, min];
-    if (e) Object.assign(e, {name, sets, min, max});
-    else db.exercises[groupId].push({id: uid(), name, sets, min, max});
+    const rest = Math.max(0, Math.min(900, parseInt($('#exRest').value) || 0));
+    const targets = {sets, min, max, rest};
+    let exId;
+    if (e) { e.ex.name = name; exId = e.id; Object.assign(e.item, targets); }
+    else {
+      const ex = {id: uid(), name}; db.exercises[groupId].push(ex); exId = ex.id;
+      plan[fid].push({exId, ...targets});
+      for (const ph of Object.keys(PHASES)) if (ph !== phase || fid !== 'all') {
+        const all = db.plans[ph][groupId].all;
+        if (!all.some(i => i.exId === exId)) all.push(ph === phase ? {exId, ...targets} : fallbackItem(ph, {id: exId}));
+      }
+    }
+    const on = new Set([...$('#sheet').querySelectorAll('.chip.toggle.on')].map(c => c.dataset.f));
+    for (const f of fs) {
+      const has = plan[f.id].some(i => i.exId === exId);
+      if (on.has(f.id) && !has) plan[f.id].push({exId, ...targets});
+      if (!on.has(f.id) && has) plan[f.id] = plan[f.id].filter(i => i.exId !== exId);
+    }
     save(); closeSheet(); render(); toast(e ? 'Updated' : 'Exercise added');
   };
-  if ($('#exDel')) $('#exDel').onclick = () => {
-    if (!confirm(`Remove ${e.name}?`)) return;
-    db.exercises[groupId] = db.exercises[groupId].filter(x => x.id !== e.id);
-    save(); closeSheet(); render(); toast('Removed');
+  if ($('#exRemoveFocus')) $('#exRemoveFocus').onclick = () => {
+    plan[fid] = plan[fid].filter(i => i.exId !== e.id); save(); closeSheet(); render(); toast('Removed from ' + inFocus.name);
   };
+  if ($('#exDel')) $('#exDel').onclick = () => {
+    if (!confirm(`Delete ${e.name} from ${g.name} (both phases, all focuses)? Past entries stay in your Journal.`)) return;
+    db.exercises[groupId] = db.exercises[groupId].filter(x => x.id !== e.id);
+    syncAll(db); save(); closeSheet(); render(); toast('Deleted');
+  };
+}
+
+/* ---------- Phase picker ---------- */
+function renderPhase(el, v){
+  const expired = db.phase && phaseDays() >= PHASE_DAYS;
+  setHeader(db.phase && !expired ? 'Training phase' : expired ? 'New 4-week block' : 'Welcome', db.phase ? phaseLabel() : 'Step 1');
+  el.innerHTML = `
+    <p class="lead">${expired ? `Your ${PHASES[db.phase.id].name.toLowerCase()} block wrapped up. What's next for the coming 4 weeks?` : db.phase ? 'Switching starts a fresh 4-week block from today.' : 'Pick your phase for the next 4 weeks. Exercises, sets, reps and rest will match it. I’ll ask again in 4 weeks.'}</p>
+    <div class="list">${Object.values(PHASES).map(p => `
+      <button class="phase-card ${db.phase && db.phase.id === p.id ? 'current' : ''}" data-p="${p.id}" style="--c:${p.color}">
+        <div class="ph-top"><span class="ph-ico">${p.icon}</span><div><div class="ph-name">${p.name}</div><div class="ph-tag">${p.tagline}</div></div>
+          ${db.phase && db.phase.id === p.id ? `<span class="pill phase" style="--c:${p.color}">${expired ? 'Last block' : 'Current'}</span>` : ''}</div>
+        <ul>${p.points.map(x => `<li>${x}</li>`).join('')}</ul>
+      </button>`).join('')}</div>
+    ${db.phase && !expired ? `<div class="btn-row"><button class="btn small" id="restartBlock">Restart ${PHASES[db.phase.id].short} block from today</button></div>` : ''}`;
+  const choose = id => {
+    const same = db.phase && db.phase.id === id && !expired;
+    if (!same) db.phase = {id, start: todayStr()};
+    save();
+    stacks.workout = [{v:'home'}]; tab = 'workout';
+    document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === 'workout'));
+    render(); window.scrollTo(0, 0);
+    toast(same ? `Still ${PHASES[id].name.toLowerCase()} · ${phaseLabel().split(' · ')[1]}` : `${PHASES[id].icon} ${PHASES[id].name} block started`);
+  };
+  el.querySelectorAll('.phase-card').forEach(b => b.onclick = () => choose(b.dataset.p));
+  if ($('#restartBlock')) $('#restartBlock').onclick = () => { db.phase.start = todayStr(); save(); choose(db.phase.id); };
 }
 
 /* ---------- Journal ---------- */
@@ -297,7 +562,7 @@ function renderJournal(el){
     if (m !== lastMonth) { html += `<div class="day-head">${m}</div>`; lastMonth = m; }
     const g = groupOf(s.group);
     html += `<button class="session-card" data-id="${s.id}">
-      <div class="session-top"><span class="dot" style="--c:${g.color}"></span><span class="gname">${g.name}</span><span class="vol">${fmtDay(s.date)}</span></div>
+      <div class="session-top"><span class="dot" style="--c:${g.color}"></span><span class="gname">${esc(sessionLabel(s))} ${phasePill(s.phase)}</span><span class="vol">${fmtDay(s.date)}</span></div>
       <div class="ex-lines">${s.entries.map(en => `<div class="ex-line"><span class="n">${esc(en.name)}</span><span class="s">${esc(setsStr(validSets(en.sets)))}</span></div>`).join('')}</div>
       <div class="meta" style="font-size:12px;color:var(--muted);margin-top:10px">${s.entries.length} exercise${s.entries.length === 1 ? '' : 's'} · ${fmtNum(sessionVolume(s))} lb volume</div>
     </button>`;
@@ -309,7 +574,7 @@ function renderSession(el, v){
   const s = db.sessions.find(x => x.id === v.id);
   if (!s) { stacks[tab] = [stacks[tab][0]]; render(); return; }
   const g = groupOf(s.group);
-  setHeader(g.name, fmtDay(s.date, true));
+  setHeader(sessionLabel(s), (s.phase && PHASES[s.phase] ? PHASES[s.phase].name + ' · ' : '') + fmtDay(s.date, true));
   el.innerHTML = `
     <div class="hero">
       <div class="stat"><div class="v">${s.entries.length}</div><div class="l">Exercises</div></div>
@@ -324,14 +589,14 @@ function renderSession(el, v){
     </div>`).join('')}
     <div class="btn-row"><button class="btn small" id="addMore">＋ Add exercise to this day</button></div>
     <div class="btn-row"><button class="btn small danger" id="delSession">Delete entire workout</button></div>`;
-  el.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => push({v:'log', g: s.group, exId: b.dataset.edit, date: s.date}));
+  el.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => push({v:'log', g: s.group, focus: s.focus, phase: s.phase || null, exId: b.dataset.edit, date: s.date}));
   el.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
     const en = s.entries.find(x => x.exId === b.dataset.del);
     if (!confirm(`Delete ${en.name} from this workout?`)) return;
     removeEntry(s, en.exId); toast('Entry deleted');
     if (!db.sessions.includes(s)) pop(); else render();
   });
-  $('#addMore').onclick = () => push({v:'group', g: s.group, date: s.date});
+  $('#addMore').onclick = () => push({v:'group', g: s.group, focus: s.focus, phase: s.phase || null, date: s.date});
   $('#delSession').onclick = () => {
     if (!confirm('Delete this entire workout?')) return;
     db.sessions = db.sessions.filter(x => x !== s); save(); toast('Workout deleted'); pop();
@@ -475,6 +740,10 @@ function renderSettings(el){
   setHeader('Settings', 'Lift Log');
   const lastBackup = localStorage.getItem('liftlog.lastBackup');
   el.innerHTML = `
+    <div class="section-title">Training phase</div>
+    <div class="set-group">
+      <button class="set-item" id="phaseBtn"><span class="grow">${db.phase ? PHASES[db.phase.id].icon + ' ' + PHASES[db.phase.id].name : 'Not set'}<span class="sub">${db.phase ? phaseLabel() + ' · started ' + fmtDay(db.phase.start) : 'Pick bulking or cutting'} · tap to change</span></span>›</button>
+    </div>
     <div class="section-title">Backup</div>
     <div class="set-group">
       <button class="set-item" id="exportBtn"><span class="grow">Export backup<span class="sub">${lastBackup ? 'Last backup ' + daysAgo(lastBackup) : 'Never backed up'} · saves a .json file</span></span>⬇︎</button>
@@ -484,33 +753,40 @@ function renderSettings(el){
     <p class="note">Your data lives only on this phone. iOS can clear web-app storage if the app goes unused for a long time, so export a backup now and then (save it to Files or iCloud Drive).</p>
     <div class="section-title">Exercises</div>
     <div class="set-group">
-      ${GROUPS.map(g => `<button class="set-item" data-g="${g.id}"><span class="dot" style="--c:${g.color}"></span><span class="grow">${g.name}<span class="sub">${db.exercises[g.id].length} exercises · tap to edit</span></span>›</button>`).join('')}
-      <button class="set-item" id="resetEx"><span class="grow">Restore default exercises<span class="sub">Adds back any missing defaults</span></span></button>
+      ${GROUPS.map(g => `<button class="set-item" data-g="${g.id}"><span class="dot" style="--c:${g.color}"></span><span class="grow">${g.name}<span class="sub">${db.exercises[g.id].length} exercises · ${FOCUS_META[g.id].map(f => f.name).join(', ')}</span></span>›</button>`).join('')}
+      <button class="set-item" id="resetEx"><span class="grow">Restore default exercises<span class="sub">Re-adds missing defaults to each focus</span></span></button>
     </div>
     <div class="section-title">Data</div>
     <div class="set-group">
       <div class="set-item" style="font-weight:500"><span class="grow">Workouts logged</span><span style="color:var(--muted)">${db.sessions.length}</span></div>
       <button class="set-item red" id="wipe"><span class="grow">Erase all data</span></button>
     </div>
-    <p class="note">Install: open in Safari → Share → <b>Add to Home Screen</b>. Est. 1RM uses the Epley formula.</p>`;
-  el.querySelectorAll('[data-g]').forEach(b => b.onclick = () => { switchTab('workout'); push({v:'group', g: b.dataset.g, date: todayStr(), editing: true}); });
+    <p class="note">Install: open in Safari → Share → <b>Add to Home Screen</b>. Est. 1RM uses the Epley formula. Version ${APP_VERSION}.</p>`;
+  el.querySelectorAll('[data-g]').forEach(b => b.onclick = () => { switchTab('workout'); push({v:'focus', g: b.dataset.g, date: todayStr()}); });
   $('#exportBtn').onclick = exportData;
+  $('#phaseBtn').onclick = () => { switchTab('workout'); push({v:'phase'}); };
   $('#importBtn').onclick = () => $('#fileIn').click();
   $('#fileIn').onchange = importData;
   $('#resetEx').onclick = () => {
     let added = 0;
-    for (const g of GROUPS) for (const d of DEFAULTS[g.id])
-      if (!db.exercises[g.id].some(x => x.name.toLowerCase() === d.name.toLowerCase())) { db.exercises[g.id].push({id: uid(), ...d}); added++; }
+    for (const ph of Object.keys(PHASES)) for (const g of GROUPS) {
+      const before = db.exercises[g.id].length;
+      const fresh = buildPlan(ph, g.id, db.exercises[g.id]);
+      added += db.exercises[g.id].length - before;
+      const plan = db.plans[ph][g.id];
+      for (const k of Object.keys(fresh)) for (const it of fresh[k]) if (!plan[k].some(i => i.exId === it.exId)) plan[k].push(it);
+    }
+    syncAll(db);
     save(); render(); toast(added ? `Added ${added} exercise${added > 1 ? 's' : ''}` : 'All defaults present');
   };
   $('#wipe').onclick = () => {
     if (!confirm('Erase ALL workouts and exercises? This cannot be undone.')) return;
     if (!confirm('Really erase everything? Export a backup first if unsure.')) return;
-    db = {version: 1, exercises: defaultExercises(), sessions: []}; save(); render(); toast('All data erased');
+    db = freshDb(); save(); stacks.workout = [{v:'phase'}]; switchTab('workout'); toast('All data erased');
   };
 }
 async function exportData(){
-  const json = JSON.stringify({app: 'liftlog', exported: new Date().toISOString(), ...db}, null, 2);
+  const json = JSON.stringify({app: 'liftlog', appVersion: APP_VERSION, exported: new Date().toISOString(), ...db}, null, 2);
   const name = `liftlog-backup-${todayStr()}.json`;
   const file = new File([json], name, {type: 'application/json'});
   localStorage.setItem('liftlog.lastBackup', todayStr());
@@ -529,8 +805,7 @@ function importData(ev){
       const d = JSON.parse(r.result);
       if (!d.exercises || !Array.isArray(d.sessions)) throw new Error('bad');
       if (!confirm(`Replace current data with backup (${d.sessions.length} workouts)?`)) return;
-      db = {version: 1, exercises: d.exercises, sessions: d.sessions};
-      for (const g of GROUPS) if (!Array.isArray(db.exercises[g.id])) db.exercises[g.id] = [];
+      db = migrate({version: d.version || 1, exercises: d.exercises, plans: d.plans, phase: d.phase === undefined ? db.phase : d.phase, sessions: d.sessions});
       save(); render(); toast('Backup restored');
     } catch (e) { toast('That file is not a Lift Log backup'); }
     ev.target.value = '';
@@ -539,5 +814,27 @@ function importData(ev){
 }
 
 /* ---------- Boot ---------- */
+function checkPhase(){
+  if (needsPhase() && stacks.workout[0].v !== 'phase') {
+    stacks.workout = [{v:'phase'}];
+    if (tab !== 'workout') switchTab('workout'); else render();
+    return true;
+  }
+  return false;
+}
+if (needsPhase()) stacks.workout = [{v:'phase'}];
 render();
-if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkPhase(); });
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  // When a new version's service worker takes over, reload once so the new code runs.
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloading) return;
+    reloading = true; location.reload();
+  });
+  navigator.serviceWorker.register('sw.js', {updateViaCache: 'none'}).then(reg => {
+    reg.update().catch(() => {});
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+  }).catch(() => {});
+}

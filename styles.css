@@ -162,3 +162,71 @@ svg.chart{width:100%;height:auto;display:block;touch-action:pan-y}
 #toast{position:fixed;left:50%;bottom:calc(var(--tabh) + var(--sab) + 20px);transform:translateX(-50%) translateY(20px);background:#f2f4f8;color:#0b0d12;padding:12px 18px;border-radius:14px;font-weight:700;font-size:15px;opacity:0;pointer-events:none;transition:.25s;z-index:60;white-space:nowrap}
 #toast.show{opacity:1;transform:translateX(-50%)}
 .fade-in{animation:fade .18s}
+
+/* v2: focus picker */
+.focus-card{position:relative;overflow:hidden;display:flex;align-items:center;gap:14px;width:100%;text-align:left;background:var(--card);border-radius:18px;padding:18px 16px 18px 22px;min-height:88px;border:1px solid rgba(255,255,255,.03);transition:transform .12s}
+.focus-card:active{transform:scale(.98);background:var(--card2)}
+.focus-card .fbar{position:absolute;left:0;top:0;bottom:0;width:6px;background:var(--c)}
+.focus-card::after{content:"";position:absolute;inset:0;background:radial-gradient(90% 120% at 100% 50%,color-mix(in srgb,var(--c) 14%,transparent),transparent 60%);pointer-events:none}
+.focus-card .main{flex:1;min-width:0;position:relative;z-index:1}
+.focus-card .name{font-size:21px;font-weight:800;letter-spacing:-.01em;display:flex;align-items:center;gap:8px}
+.focus-card .meta{font-size:14px;color:#b4bbca;margin-top:3px}
+.focus-card .meta2{font-size:12.5px;color:var(--muted);margin-top:4px}
+.focus-card .chev{color:#4a5263;position:relative;z-index:1}
+.pill.sugg{background:color-mix(in srgb,var(--c) 22%,transparent);color:var(--c);font-size:11px;padding:3px 8px}
+.group-card .gmeta b{color:var(--text);font-weight:700}
+
+/* v2: last-time panel */
+.last-card{background:linear-gradient(140deg,color-mix(in srgb,var(--c) 30%,var(--card)) 0%,var(--card) 75%);border-radius:20px;padding:16px;border:1px solid color-mix(in srgb,var(--c) 35%,transparent)}
+.lc-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:12px}
+.lc-title{font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--c)}
+.lc-date{font-size:13px;color:#c9cfdb;font-weight:600;text-align:right}
+.lc-sets{display:grid;grid-template-columns:repeat(auto-fit,minmax(92px,1fr));gap:8px}
+.lc-set{background:rgba(11,13,18,.55);border-radius:14px;padding:10px 10px 9px;text-align:center}
+.lc-set .k{font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+.lc-set .w{font-size:24px;font-weight:800;letter-spacing:-.02em;margin-top:2px;font-variant-numeric:tabular-nums}
+.lc-set .w small{font-size:12px;color:var(--muted);font-weight:700}
+.lc-set .r{font-size:14px;color:#c9cfdb;font-weight:600}
+.lc-foot{font-size:12.5px;color:var(--muted);margin-top:12px;font-weight:600}
+.lc-first{font-size:15px;color:#c9cfdb;line-height:1.4}
+.target-row{display:flex;justify-content:space-between;align-items:center;background:var(--card);border-radius:14px;padding:14px 16px;margin-top:10px;font-size:14px;color:var(--muted);font-weight:600}
+.target-row b{color:var(--text);font-size:17px}
+.field input.prefilled{color:#9aa3b5;border-style:dashed;border-color:color-mix(in srgb,var(--c,#ff6b35) 45%,var(--line))}
+.pre-note{display:flex;align-items:center;gap:8px;margin-top:4px}
+.pre-dot{width:14px;height:14px;border-radius:5px;border:1.5px dashed var(--muted);flex:none}
+
+/* v2: chips */
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{padding:10px 14px;border-radius:999px;background:var(--card2);font-size:14px;font-weight:600;border:1.5px solid var(--line);min-height:42px}
+.chip:active{opacity:.8}
+.chip.toggle.on{background:color-mix(in srgb,var(--c) 22%,transparent);border-color:var(--c);color:var(--text)}
+.chip.static{color:var(--muted);border-style:dashed;display:inline-flex;align-items:center}
+
+/* v3: phases */
+.lead{font-size:16px;line-height:1.45;color:#c9cfdb;margin:2px 4px 18px}
+.phase-card{position:relative;overflow:hidden;width:100%;text-align:left;background:var(--card);border-radius:22px;padding:18px;border:1.5px solid rgba(255,255,255,.05);transition:transform .12s}
+.phase-card::before{content:"";position:absolute;inset:0;background:radial-gradient(110% 90% at 100% 0%,color-mix(in srgb,var(--c) 30%,transparent),transparent 60%);pointer-events:none}
+.phase-card:active{transform:scale(.98)}
+.phase-card.current{border-color:var(--c)}
+.ph-top{position:relative;display:flex;align-items:center;gap:14px}
+.ph-top>div{flex:1}
+.ph-ico{width:52px;height:52px;border-radius:16px;display:grid;place-items:center;font-size:28px;background:color-mix(in srgb,var(--c) 20%,transparent)}
+.ph-name{font-size:24px;font-weight:800;letter-spacing:-.01em}
+.ph-tag{font-size:14px;color:var(--c);font-weight:700;margin-top:2px}
+.phase-card ul{position:relative;margin:14px 0 0;padding:0 0 0 18px;color:#c9cfdb;font-size:14.5px;line-height:1.6}
+.pill.phase{background:color-mix(in srgb,var(--c) 20%,transparent);color:var(--c);font-size:11px;padding:3px 8px;vertical-align:middle;margin-left:4px}
+.phase-chip{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:linear-gradient(120deg,color-mix(in srgb,var(--c) 22%,var(--card)),var(--card) 70%);border:1px solid color-mix(in srgb,var(--c) 35%,transparent);border-radius:18px;padding:12px 14px;margin-bottom:12px}
+.phase-chip:active{opacity:.85}
+.pc-ico{font-size:24px}
+.pc-main{flex:1;display:flex;flex-direction:column}
+.pc-main b{font-size:17px}
+.pc-main span{font-size:12.5px;color:var(--muted);margin-top:2px}
+.pc-chg{font-size:14px;font-weight:700;color:var(--c)}
+.phase-tip{font-size:13.5px;color:#c9cfdb;background:color-mix(in srgb,var(--c) 10%,var(--card));border-left:3px solid var(--c);border-radius:12px;padding:10px 12px;margin-bottom:12px;line-height:1.4}
+.target-row>div{display:flex;flex-direction:column;gap:3px}
+.target-row .rest{text-align:right;align-items:flex-end}
+.tr-lbl{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--c)}
+.target-row{border:1px solid color-mix(in srgb,var(--c) 25%,transparent)}
+.four{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.four .text-input{text-align:center;font-weight:700;padding:0 6px}
+.sheet-ctx{display:inline-block;font-size:13px;font-weight:700;color:var(--c);background:color-mix(in srgb,var(--c) 14%,transparent);padding:6px 10px;border-radius:10px;margin:-6px 0 4px}
