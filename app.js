@@ -7,7 +7,7 @@ const GROUPS = [
   {id:'legs', name:'Legs', color:'#3ddc97', icon:'<path d="M9 3l-1 8 2 10M15 3l1 8-2 10M8 11h8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>'},
   {id:'shoulders', name:'Shoulders', color:'#b77dff', icon:'<circle cx="12" cy="7" r="3" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M4 19c0-4 2-7 4-8h8c2 1 4 4 4 8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>'}
 ];
-const APP_VERSION = '4.0';
+const APP_VERSION = '5.0';
 const SEED_PLAN_VERSION = 1; // plan.json v1 == built-in defaults
 const PHASE_DAYS = 28;
 const PHASES = {
@@ -104,7 +104,7 @@ function syncAll(d){
   }
 }
 function freshDb(){
-  const d = {version: 4, exercises: {}, plans: {}, phase: null, coach: {planVersion: SEED_PLAN_VERSION, banner: null}, sessions: []};
+  const d = {version: 5, exercises: {}, plans: {}, phase: null, coach: {planVersion: SEED_PLAN_VERSION, banner: null}, sessions: [], body: [], profile: {height: null}};
   for (const g of GROUPS) d.exercises[g.id] = [];
   for (const ph of Object.keys(PHASES)) { d.plans[ph] = {}; for (const g of GROUPS) d.plans[ph][g.id] = buildPlan(ph, g.id, d.exercises[g.id]); }
   return d;
@@ -130,6 +130,14 @@ function migrate(d){
     d.version = 4;
   }
   d.coach = d.coach || {planVersion: SEED_PLAN_VERSION, banner: null};
+  if (d.version < 5) {
+    // v5: body-metrics log + profile (additive only)
+    if (!Array.isArray(d.body)) d.body = [];
+    if (!d.profile || typeof d.profile !== 'object') d.profile = {height: null};
+    d.version = 5;
+  }
+  if (!Array.isArray(d.body)) d.body = [];
+  if (!d.profile || typeof d.profile !== 'object') d.profile = {height: null};
   for (const ph of Object.keys(PHASES)) { d.plans[ph] = d.plans[ph] || {}; for (const g of GROUPS) if (!d.plans[ph][g.id]) d.plans[ph][g.id] = buildPlan(ph, g.id, d.exercises[g.id]); }
   syncAll(d);
   return d;
@@ -140,7 +148,7 @@ function load(){
     if (raw) {
       const d = JSON.parse(raw);
       if (d && d.exercises && Array.isArray(d.sessions)) {
-        if (!d.version || d.version < 4) localStorage.setItem(STORE_KEY + '.backup-v' + (d.version || 1), raw); // safety copy
+        if (!d.version || d.version < 5) localStorage.setItem(STORE_KEY + '.backup-v' + (d.version || 1), raw); // safety copy before upgrading
         return migrate(d);
       }
     }
@@ -228,7 +236,7 @@ function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add
 
 /* ---------- Navigation ---------- */
 let tab = 'workout';
-const stacks = {workout: [{v:'home'}], journal: [{v:'journal'}], progress: [{v:'progress'}], settings: [{v:'settings'}]};
+const stacks = {workout: [{v:'home'}], journal: [{v:'journal'}], body: [{v:'body'}], progress: [{v:'progress'}], settings: [{v:'settings'}]};
 const cur = () => stacks[tab][stacks[tab].length - 1];
 function push(view){ stacks[tab].push(view); render(); window.scrollTo(0, 0); }
 function pop(){ if (stacks[tab].length > 1) { stacks[tab].pop(); render(); } }
@@ -251,7 +259,7 @@ function render(){
   const v = cur(), el = $('#view');
   el.className = 'fade-in'; void el.offsetWidth;
   ({phase: renderPhase, home: renderHome, focus: renderFocus, group: renderGroup, log: renderLog, journal: renderJournal, session: renderSession,
-    progress: renderProgress, settings: renderSettings})[v.v](el, v);
+    progress: renderProgress, body: renderBody, settings: renderSettings})[v.v](el, v);
 }
 
 /* ---------- Workout: Home ---------- */
@@ -616,7 +624,7 @@ function renderSession(el, v){
 }
 
 /* ---------- Progress ---------- */
-let prog = {exId: null, metric: 'top', range: 'all'};
+let prog = {exId: null, metric: 'top', range: 'all', mode: 'lifts'};
 function loggedExercises(){
   const map = new Map();
   for (const s of db.sessions) for (const en of s.entries) {
@@ -629,7 +637,15 @@ function loggedExercises(){
   }
   return [...map.values()];
 }
+function progressModeSeg(){
+  return `<div class="seg mode-seg" id="modeSeg"><button data-m="lifts" class="${prog.mode !== 'body' ? 'on' : ''}">🏋️ Lifts</button><button data-m="body" class="${prog.mode === 'body' ? 'on' : ''}">⚖️ Body weight</button></div>`;
+}
+function bindModeSeg(el){ el.querySelectorAll('#modeSeg button').forEach(b => b.onclick = () => { prog.mode = b.dataset.m; render(); }); }
 function renderProgress(el){
+  if (prog.mode === 'body') { renderBodyProgress(el); el.insertAdjacentHTML('afterbegin', progressModeSeg()); bindModeSeg(el); return; }
+  renderLiftProgress(el); el.insertAdjacentHTML('afterbegin', progressModeSeg()); bindModeSeg(el);
+}
+function renderLiftProgress(el){
   setHeader('Progress', 'Trends per exercise');
   const exs = loggedExercises();
   if (!exs.length) {
@@ -756,6 +772,10 @@ function renderSettings(el){
     <div class="set-group">
       <button class="set-item" id="phaseBtn"><span class="grow">${db.phase ? PHASES[db.phase.id].icon + ' ' + PHASES[db.phase.id].name : 'Not set'}<span class="sub">${db.phase ? phaseLabel() + ' · started ' + fmtDay(db.phase.start) : 'Pick bulking or cutting'} · tap to change</span></span>›</button>
     </div>
+    <div class="section-title">Profile</div>
+    <div class="set-group">
+      <button class="set-item" id="heightSet"><span class="grow">Height<span class="sub">${fmtHeight(db.profile.height)}${db.profile.height ? ' · ' + fmtNum(db.profile.height) + ' in' : ''} · used for BMI</span></span>›</button>
+    </div>
     ${coachSettingsHtml()}
     <div class="section-title">Backup</div>
     <div class="set-group">
@@ -779,6 +799,7 @@ function renderSettings(el){
   $('#exportBtn').onclick = exportData;
   $('#phaseBtn').onclick = () => { switchTab('workout'); push({v:'phase'}); };
   bindCoachSettings();
+  $('#heightSet').onclick = heightSheet;
   $('#importBtn').onclick = () => $('#fileIn').click();
   $('#fileIn').onchange = importData;
   $('#resetEx').onclick = () => {
@@ -823,12 +844,193 @@ function importData(ev){
       const d = JSON.parse(r.result);
       if (!d.exercises || !Array.isArray(d.sessions)) throw new Error('bad');
       if (!confirm(`Replace current data with backup (${d.sessions.length} workouts)?`)) return;
-      db = migrate({version: d.version || 1, exercises: d.exercises, plans: d.plans, phase: d.phase === undefined ? db.phase : d.phase, coach: d.coach || db.coach, sessions: d.sessions});
+      db = migrate({version: d.version || 1, exercises: d.exercises, plans: d.plans, phase: d.phase === undefined ? db.phase : d.phase, coach: d.coach || db.coach, sessions: d.sessions,
+        body: Array.isArray(d.body) ? d.body : db.body, profile: d.profile || db.profile});
       save(); render(); toast('Backup restored');
     } catch (e) { toast('That file is not a Lift Log backup'); }
     ev.target.value = '';
   };
   r.readAsText(f);
+}
+
+/* ---------- Body log ---------- */
+const BODY_FIELDS = [
+  {k: 'bf', label: 'Body fat', unit: '%', step: '0.1', max: 70},
+  {k: 'waist', label: 'Waist', unit: 'in', step: '0.1', max: 80},
+  {k: 'chest', label: 'Chest', unit: 'in', step: '0.1', max: 80},
+  {k: 'arm', label: 'Arms', unit: 'in', step: '0.1', max: 40},
+  {k: 'thigh', label: 'Thighs', unit: 'in', step: '0.1', max: 60}
+];
+const bodySorted = () => [...db.body].sort((a, b) => b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id)));
+const bmi = w => db.profile && db.profile.height > 0 && w > 0 ? 703 * w / (db.profile.height * db.profile.height) : null;
+const fmtHeight = h => h ? `${Math.floor(h / 12)}′${fmtNum(h % 12)}″` : 'Not set';
+const dateAdd = (s, n) => { const d = parseDate(s); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; };
+/** one point per date (average of same-day entries) + trailing 7-day rolling average */
+function weightSeries(){
+  const byDate = new Map();
+  for (const e of db.body) if (e.weight > 0) { const a = byDate.get(e.date) || []; a.push(e.weight); byDate.set(e.date, a); }
+  const pts = [...byDate.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([date, ws]) => ({date, y: ws.reduce((x, y) => x + y, 0) / ws.length}));
+  for (const p of pts) {
+    const from = dateAdd(p.date, -6), win = pts.filter(q => q.date >= from && q.date <= p.date);
+    p.avg = win.reduce((a, q) => a + q.y, 0) / win.length;
+  }
+  return pts;
+}
+function renderBody(el){
+  const list = bodySorted(), latest = list[0];
+  setHeader('Body', list.length ? `${list.length} entr${list.length === 1 ? 'y' : 'ies'}` : 'Weight & measurements');
+  const series = weightSeries(), lastAvg = series.length ? series[series.length - 1].avg : null;
+  const weekAgo = series.length ? series.filter(p => p.date <= dateAdd(series[series.length - 1].date, -7)).pop() : null;
+  const b = latest ? bmi(latest.weight) : null;
+  el.innerHTML = `
+    <div class="hero">
+      <div class="stat"><div class="v">${latest ? fmtNum(latest.weight) : '–'}</div><div class="l">Latest (lb)</div></div>
+      <div class="stat"><div class="v">${lastAvg ? fmtNum(Math.round(lastAvg * 10) / 10) : '–'}</div><div class="l">7-day avg</div></div>
+      <div class="stat"><div class="v">${b ? fmtNum(Math.round(b * 10) / 10) : '–'}</div><div class="l">BMI</div></div>
+    </div>
+    ${weekAgo && lastAvg ? `<p class="note" style="margin:0 6px 4px">7-day avg ${lastAvg - weekAgo.avg >= 0 ? '▲' : '▼'} ${fmtNum(Math.abs(Math.round((lastAvg - weekAgo.avg) * 10) / 10))} lb vs a week earlier</p>` : ''}
+    <div class="btn-row"><button class="btn primary" id="addBody">＋ Log body weight</button></div>
+    <div class="btn-row"><button class="btn small" id="heightBtn">📏 Height: ${fmtHeight(db.profile.height)}</button>${series.length > 1 ? `<button class="btn small" id="trendBtn">📈 Weight trend</button>` : ''}</div>
+    <div class="section-title">History</div>
+    ${list.length ? `<div class="list">${list.map(e => `
+      <button class="row body-row" data-id="${esc(e.id)}">
+        <div class="main"><div class="name">${fmtNum(e.weight)} lb${e.bf ? ` <span class="pill">${fmtNum(e.bf)}% bf</span>` : ''}</div>
+          <div class="meta">${fmtDay(e.date, true)}${BODY_FIELDS.filter(f => f.k !== 'bf' && e[f.k]).map(f => ` · ${f.label} ${fmtNum(e[f.k])}″`).join('')}</div>
+          ${e.note ? `<div class="meta body-note">${esc(e.note)}</div>` : ''}</div>
+        <svg class="chev" width="20" height="20" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+      </button>`).join('')}</div>` : `<div class="empty" style="padding:30px 10px"><div class="ico">⚖️</div><p>Log your weight (and optional measurements) to track your bulk or cut.</p></div>`}`;
+  $('#addBody').onclick = () => bodySheet(null);
+  $('#heightBtn').onclick = heightSheet;
+  if ($('#trendBtn')) $('#trendBtn').onclick = () => { prog.mode = 'body'; switchTab('progress'); };
+  el.querySelectorAll('.body-row').forEach(r => r.onclick = () => bodySheet(db.body.find(x => String(x.id) === r.dataset.id)));
+}
+function bodySheet(e){
+  const v = (k) => e && e[k] != null && e[k] !== '' ? e[k] : '';
+  openSheet(`<h2>${e ? 'Edit entry' : 'Log body weight'}</h2>
+    <div class="two">
+      <div><label class="form-label">Date</label><input class="text-input" id="bDate" type="date" value="${e ? e.date : todayStr()}" max="${todayStr()}"></div>
+      <div><label class="form-label">Weight (lb) *</label><input class="text-input big-num" id="bWeight" type="number" inputmode="decimal" step="0.1" min="0" value="${v('weight')}" placeholder="${bodySorted()[0] ? fmtNum(bodySorted()[0].weight) : '0'}"></div>
+    </div>
+    <label class="form-label">Optional</label>
+    <div class="body-grid">${BODY_FIELDS.map(f => `<div class="field"><input type="number" inputmode="decimal" step="${f.step}" min="0" id="b_${f.k}" value="${v(f.k)}" placeholder="${f.label}"><span class="unit">${f.unit}</span></div>`).join('')}</div>
+    <label class="form-label">Note</label><input class="text-input" id="bNote" maxlength="140" value="${esc(v('note'))}" placeholder="e.g. morning, fasted">
+    <div class="btn-row" style="margin-top:18px"><button class="btn primary" id="bSave">${e ? 'Save changes' : 'Save entry'}</button></div>
+    ${e ? `<div class="btn-row"><button class="btn small danger" id="bDel">Delete entry</button></div>` : ''}
+    <div class="btn-row"><button class="btn small" id="bCancel">Cancel</button></div>`);
+  if (!e) setTimeout(() => $('#bWeight').focus(), 250);
+  $('#bCancel').onclick = closeSheet;
+  $('#bSave').onclick = () => {
+    const weight = parseFloat($('#bWeight').value);
+    if (!(weight > 0 && weight < 1500)) { toast('Enter your body weight'); return; }
+    const date = $('#bDate').value || todayStr();
+    const entry = {id: e ? e.id : uid(), date, weight: Math.round(weight * 10) / 10};
+    for (const f of BODY_FIELDS) { const x = parseFloat($('#b_' + f.k).value); entry[f.k] = x > 0 && x <= f.max ? Math.round(x * 10) / 10 : null; }
+    entry.note = $('#bNote').value.trim().slice(0, 140);
+    if (e) Object.assign(e, entry); else db.body.push(entry);
+    save(); closeSheet(); render(); toast(e ? 'Updated' : '✓ Weight logged');
+  };
+  if ($('#bDel')) $('#bDel').onclick = () => {
+    if (!confirm('Delete this body entry?')) return;
+    db.body = db.body.filter(x => x !== e); save(); closeSheet(); render(); toast('Entry deleted');
+  };
+}
+function heightSheet(){
+  const h = db.profile.height || 0;
+  openSheet(`<h2>Your height</h2>
+    <div class="two">
+      <div><label class="form-label">Feet</label><input class="text-input big-num" id="hFt" type="number" inputmode="numeric" value="${h ? Math.floor(h / 12) : ''}" placeholder="5"></div>
+      <div><label class="form-label">Inches</label><input class="text-input big-num" id="hIn" type="number" inputmode="decimal" step="0.5" value="${h ? fmtNum(h % 12) : ''}" placeholder="10"></div>
+    </div>
+    <p class="note">Stored as total inches. Used for BMI.</p>
+    <div class="btn-row" style="margin-top:14px"><button class="btn primary" id="hSave">Save height</button></div>
+    <div class="btn-row"><button class="btn small" id="hCancel">Cancel</button></div>`);
+  $('#hCancel').onclick = closeSheet;
+  $('#hSave').onclick = () => {
+    const total = (parseFloat($('#hFt').value) || 0) * 12 + (parseFloat($('#hIn').value) || 0);
+    if (!(total >= 36 && total <= 96)) { toast('Enter a height between 3′ and 8′'); return; }
+    db.profile.height = Math.round(total * 10) / 10; save(); closeSheet(); render(); toast('Height saved');
+  };
+}
+function renderBodyProgress(el){
+  setHeader('Progress', 'Body weight trend');
+  let pts = weightSeries();
+  if (!pts.length) {
+    el.innerHTML = `<div class="empty"><div class="ico">⚖️</div><h3>No weigh-ins yet</h3><p>Log your body weight on the Body tab to see the trend and 7-day average.</p><button class="btn primary" id="go">Log body weight</button></div>`;
+    $('#go').onclick = () => switchTab('body');
+    return;
+  }
+  if (prog.range !== 'all') {
+    const d = new Date(); d.setDate(d.getDate() - (prog.range === '1m' ? 30 : prog.range === '3m' ? 91 : 365));
+    const cut = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+    pts = pts.filter(p => p.date >= cut);
+  }
+  const last = pts[pts.length - 1], first = pts[0];
+  const delta = last && pts.length > 1 ? last.avg - first.avg : 0;
+  const all = weightSeries();
+  const r1 = n => fmtNum(Math.round(n * 10) / 10);
+  el.innerHTML = `
+    <div class="chart-card">
+      <div class="chart-head">
+        <div><div class="lbl" style="font-size:12px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.05em" id="selLbl">7-day average</div>
+          <div class="v" id="selVal">${last ? r1(last.avg) : '–'}<small>lb</small></div></div>
+        <div class="d" id="selDate">${last ? fmtDay(last.date) + ' · ' + r1(last.y) + ' lb' : ''}<br>${pts.length > 1 ? `<span class="delta ${delta <= 0 ? 'up' : 'down'}" style="color:var(--muted)">${delta >= 0 ? '▲' : '▼'} ${r1(Math.abs(delta))} lb</span>` : ''}</div>
+      </div>
+      <div id="chartBox">${pts.length ? weightChart(pts) : '<div class="empty" style="padding:40px 0">No weigh-ins in this range</div>'}</div>
+      <div class="legend"><span><i class="lg-dot"></i>Weigh-in</span><span><i class="lg-line"></i>7-day avg</span></div>
+      <div class="seg" style="margin-top:8px" id="rangeSeg">
+        ${[['1m','1M'],['3m','3M'],['1y','1Y'],['all','All']].map(([k, l]) => `<button data-k="${k}" class="${prog.range === k ? 'on' : ''}">${l}</button>`).join('')}
+      </div>
+    </div>
+    <div class="pr-grid">
+      <div class="stat"><div class="v">${r1(Math.min(...all.map(p => p.y)))}</div><div class="l">Lowest</div></div>
+      <div class="stat"><div class="v">${r1(Math.max(...all.map(p => p.y)))}</div><div class="l">Highest</div></div>
+      <div class="stat"><div class="v">${db.body.length}</div><div class="l">Weigh-ins</div></div>
+    </div>
+    <div class="btn-row"><button class="btn small" id="toBody">⚖️ Open body log</button></div>`;
+  el.querySelectorAll('#rangeSeg button').forEach(b => b.onclick = () => { prog.range = b.dataset.k; render(); });
+  $('#toBody').onclick = () => switchTab('body');
+  const svg = el.querySelector('svg.chart');
+  if (svg) {
+    const pick = clientX => {
+      const r = svg.getBoundingClientRect(), x = (clientX - r.left) / r.width * 360;
+      const cs = [...svg.querySelectorAll('.pt')]; let bi = 0, bd = 1e9;
+      cs.forEach((c, i) => { const dd = Math.abs(+c.getAttribute('cx') - x); if (dd < bd) { bd = dd; bi = i; } });
+      cs.forEach((c, i) => c.setAttribute('r', i === bi ? 5.5 : 3));
+      const p = pts[bi], cur = svg.querySelector('.cursor');
+      cur.setAttribute('x1', cs[bi].getAttribute('cx')); cur.setAttribute('x2', cs[bi].getAttribute('cx')); cur.style.opacity = 1;
+      $('#selLbl').textContent = 'Weigh-in';
+      $('#selVal').innerHTML = `${r1(p.y)}<small>lb</small>`;
+      $('#selDate').innerHTML = `${fmtDay(p.date)}<br><span style="font-size:12px">7-day avg ${r1(p.avg)} lb</span>`;
+    };
+    svg.addEventListener('pointerdown', e => pick(e.clientX));
+    svg.addEventListener('pointermove', e => { if (e.buttons || e.pointerType === 'touch') pick(e.clientX); });
+  }
+}
+function weightChart(pts){
+  const W = 360, H = 200, L = 40, R = 12, T = 14, B = 26, color = '#2ec4ff', avgColor = '#ffc145';
+  const ys = pts.flatMap(p => [p.y, p.avg]);
+  let lo = Math.min(...ys), hi = Math.max(...ys);
+  if (hi - lo < 4) { const m = (hi + lo) / 2; lo = m - 2; hi = m + 2; }
+  const span = hi - lo; lo -= span * .12; hi += span * .12;
+  const step = niceStep((hi - lo) / 4);
+  lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
+  const t0 = parseDate(pts[0].date).getTime(), t1 = parseDate(pts[pts.length - 1].date).getTime();
+  const xOf = p => pts.length === 1 || t1 === t0 ? (L + W - R) / 2 : L + (W - L - R) * (parseDate(p.date).getTime() - t0) / (t1 - t0);
+  const yOf = y => T + (H - T - B) * (1 - (y - lo) / (hi - lo));
+  const path = key => pts.map((p, i) => (i ? 'L' : 'M') + xOf(p).toFixed(1) + ' ' + yOf(p[key]).toFixed(1)).join(' ');
+  let grid = '';
+  for (let v = lo; v <= hi + 1e-9; v += step) { const y = yOf(v); grid += `<line x1="${L}" x2="${W - R}" y1="${y}" y2="${y}" stroke="#262c38"/><text x="${L - 6}" y="${y + 4}" text-anchor="end" fill="#6b7385" font-size="10.5">${fmtNum(Math.round(v * 10) / 10)}</text>`; }
+  const short = s => parseDate(s).toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
+  const lbl = pts.length === 1 ? `<text x="${xOf(pts[0])}" y="${H - 6}" text-anchor="middle" fill="#6b7385" font-size="10.5">${short(pts[0].date)}</text>`
+    : `<text x="${L}" y="${H - 6}" fill="#6b7385" font-size="10.5">${short(pts[0].date)}</text><text x="${W - R}" y="${H - 6}" text-anchor="end" fill="#6b7385" font-size="10.5">${short(pts[pts.length - 1].date)}</text>`;
+  return `<svg class="chart weight-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Body weight chart">
+    ${grid}
+    ${pts.length > 1 ? `<path d="${path('y')}" fill="none" stroke="${color}" stroke-opacity=".25" stroke-width="1.2"/>` : ''}
+    ${pts.length > 1 ? `<path class="avg-line" d="${path('avg')}" fill="none" stroke="${avgColor}" stroke-width="2.8" stroke-linejoin="round" stroke-linecap="round"/>` : ''}
+    <line class="cursor" x1="0" x2="0" y1="${T}" y2="${H - B}" stroke="#fff" stroke-opacity=".25" stroke-dasharray="3 3" style="opacity:0"/>
+    ${pts.map(p => `<circle class="pt" cx="${xOf(p).toFixed(1)}" cy="${yOf(p.y).toFixed(1)}" r="3" fill="${color}" stroke="#151922" stroke-width="1.5"/>`).join('')}
+    ${lbl}
+  </svg>`;
 }
 
 /* ---------- Coach plan (down) ---------- */

@@ -22,13 +22,18 @@ gh api 'repos/jbozarth206/lift-log-data/commits?path=data/liftlog.json&per_page=
 ### Data format (same as the app's backup export)
 ```jsonc
 {
-  "app": "liftlog", "appVersion": "4.0",
+  "app": "liftlog", "appVersion": "5.0",
   "exportedAt": "2026-11-11T18:40:00.000Z",      // when the phone pushed it
-  "version": 4,                                   // data schema version
+  "version": 5,                                   // data schema version
   "phase": {"id": "bulk", "start": "2026-11-11"}, // current 4-week block (bulk|cut), null if not chosen yet
   "exercises": { "back": [{"id": "mhx2k1abcde", "name": "Lat Pulldown"}], "chest": [], "legs": [], "shoulders": [] },
   "plans": { "bulk": { "back": { "upper": [{"exId": "mhx2k1abcde", "sets": 4, "min": 6, "max": 8, "rest": 150, "notes": "…"}], "mid": [], "lower": [], "all": [] } }, "cut": {} },
   "coach": {"planVersion": 1, "planUpdatedAt": null, "lastCheck": "…"},    // which plan.json version the phone has applied
+  "profile": {"height": 70},                      // inches; null until he sets it
+  "body": [                                       // body-metrics log (v5+), any order; sort by date
+    {"id": "mwclzbjze0bno", "date": "2026-11-11", "weight": 181.4, "bf": 15.2,
+     "waist": 33.5, "chest": null, "arm": 15.8, "thigh": null, "note": "morning, fasted"}
+  ],
   "sessions": [
     {"id": "…", "date": "2026-11-11", "group": "back", "focus": "upper", "phase": "bulk",
      "entries": [{"exId": "mhx2k1abcde", "name": "Lat Pulldown", "sets": [{"w": 135, "r": 12}, {"w": 140, "r": 10}]}]}
@@ -39,6 +44,19 @@ gh api 'repos/jbozarth206/lift-log-data/commits?path=data/liftlog.json&per_page=
 - `focus` / `phase` are `null` on workouts logged before those features existed. Treat them as unlabeled, not as errors.
 - `focus: "all"` means he trained the whole group that day.
 - Use the exercise `id` (it never changes) to follow progress across renames. `name` in entries is a snapshot taken when the set was logged.
+- **Body log** (top-level `body`, added in app v5; missing or empty in older data, so treat a missing key as `[]`):
+
+  | Field | Unit / type | Notes |
+  |---|---|---|
+  | `id` | string | Stable entry id. |
+  | `date` | `YYYY-MM-DD` | His local date. There can be several entries on one day. |
+  | `weight` | lb, number (1 decimal) | Always present. |
+  | `bf` | body fat %, number or `null` | Optional. |
+  | `waist`, `chest`, `arm`, `thigh` | inches, number or `null` | Optional tape measurements (`arm` = arms, `thigh` = thighs). |
+  | `note` | string ≤140 | Optional, may be `""`. |
+
+  The app's trend line is a **7-day rolling average**: it averages same-day entries into one daily value, then for each day it averages the daily values from the previous 7 calendar days (that day included). Use the same method to judge bulk and cut rate, e.g. about 0.25–0.5 lb/week up on a bulk and about 0.5–1% of body weight per week down on a cut.
+- **Profile**: `profile.height` is in **inches** (e.g. 70 = 5′10″), or `null` if not set. BMI = `703 × weight / height²`.
 - If `coach.planVersion` is lower than `plan.json`'s `version`, his phone hasn't opened the app since your last publish.
 
 ## 2. Publish a new plan
@@ -62,7 +80,7 @@ Tips:
 - Base progression on his recent top sets and estimated 1RM (Epley: `w × (1 + r/30)`).
 
 ## 3. Rules
-1. **Never write to `lift-log-data`.** Don't edit, delete, force-push or rewrite history there. It's his only cloud copy, and the app overwrites it.
+1. **Never write to `lift-log-data`.** That includes `body` and `profile`: read them, never edit them. Don't edit, delete, force-push or rewrite history there. It's his only cloud copy, and the app overwrites it.
 2. In `lift-log`, change **only `plan.json`** (and these docs if asked). Don't touch app code (`app.js`, `sw.js`, `index.html`, …) unless the user asks.
 3. **Always run `tools/validate_plan.py`** and push only if it prints `OK`. Every published change needs a version bump.
 4. Never put tokens, passwords or personal data in `plan.json`. It's public.
