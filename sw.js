@@ -1,5 +1,5 @@
-const CACHE = 'liftlog-v3';
-const ASSETS = ['./', './index.html', './styles.css', './app.js', './styles.css?v=3', './app.js?v=3', './manifest.webmanifest',
+const CACHE = 'liftlog-v4';
+const ASSETS = ['./', './index.html', './styles.css', './app.js', './styles.css?v=4', './app.js?v=4', './manifest.webmanifest',
   './icons/apple-touch-icon.png', './icons/icon-192.png', './icons/icon-512.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS.map(u => new Request(u, {cache: 'reload'})))).then(() => self.skipWaiting()));
@@ -11,6 +11,8 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
+  // coach plan: always from the network, never cached (the app ignores it when offline)
+  if (new URL(req.url).pathname.endsWith('/plan.json')) { e.respondWith(fetch(req, {cache: 'no-store'})); return; }
   // tidy any caches an older worker re-created after we activated
   if (req.mode === 'navigate') caches.keys().then(keys => keys.filter(k => k !== CACHE).forEach(k => caches.delete(k)));
   e.respondWith(

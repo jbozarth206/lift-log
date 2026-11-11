@@ -7,7 +7,8 @@ const GROUPS = [
   {id:'legs', name:'Legs', color:'#3ddc97', icon:'<path d="M9 3l-1 8 2 10M15 3l1 8-2 10M8 11h8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>'},
   {id:'shoulders', name:'Shoulders', color:'#b77dff', icon:'<circle cx="12" cy="7" r="3" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M4 19c0-4 2-7 4-8h8c2 1 4 4 4 8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>'}
 ];
-const APP_VERSION = '3.0';
+const APP_VERSION = '4.0';
+const SEED_PLAN_VERSION = 1; // plan.json v1 == built-in defaults
 const PHASE_DAYS = 28;
 const PHASES = {
   bulk: {id:'bulk', name:'Bulking', short:'Bulk', color:'#ff6b35', icon:'💪',
@@ -103,7 +104,7 @@ function syncAll(d){
   }
 }
 function freshDb(){
-  const d = {version: 3, exercises: {}, plans: {}, phase: null, sessions: []};
+  const d = {version: 4, exercises: {}, plans: {}, phase: null, coach: {planVersion: SEED_PLAN_VERSION, banner: null}, sessions: []};
   for (const g of GROUPS) d.exercises[g.id] = [];
   for (const ph of Object.keys(PHASES)) { d.plans[ph] = {}; for (const g of GROUPS) d.plans[ph][g.id] = buildPlan(ph, g.id, d.exercises[g.id]); }
   return d;
@@ -123,6 +124,12 @@ function migrate(d){
     if (!('phase' in d)) d.phase = null;
     d.version = 3;
   }
+  if (d.version < 4) {
+    // v3 targets == coach plan v1 seed, so mark it applied (nothing changes on first fetch)
+    d.coach = Object.assign({planVersion: SEED_PLAN_VERSION, banner: null}, d.coach || {});
+    d.version = 4;
+  }
+  d.coach = d.coach || {planVersion: SEED_PLAN_VERSION, banner: null};
   for (const ph of Object.keys(PHASES)) { d.plans[ph] = d.plans[ph] || {}; for (const g of GROUPS) if (!d.plans[ph][g.id]) d.plans[ph][g.id] = buildPlan(ph, g.id, d.exercises[g.id]); }
   syncAll(d);
   return d;
@@ -133,7 +140,7 @@ function load(){
     if (raw) {
       const d = JSON.parse(raw);
       if (d && d.exercises && Array.isArray(d.sessions)) {
-        if (!d.version || d.version < 3) localStorage.setItem(STORE_KEY + '.backup-v' + (d.version || 1), raw); // safety copy
+        if (!d.version || d.version < 4) localStorage.setItem(STORE_KEY + '.backup-v' + (d.version || 1), raw); // safety copy
         return migrate(d);
       }
     }
@@ -141,8 +148,10 @@ function load(){
   return freshDb();
 }
 let db = load();
-function save(){ localStorage.setItem(STORE_KEY, JSON.stringify(db)); }
-save();
+function persist(){ localStorage.setItem(STORE_KEY, JSON.stringify(db)); }
+/** save a user change: persist locally, then (debounced) push to Coach Sync */
+function save(){ persist(); try { Sync.markDirty(); } catch (e) { /* sync module not ready yet */ } }
+persist();
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(()=>{});
 
 /* ---------- Helpers ---------- */
@@ -256,6 +265,7 @@ function renderHome(el){
   const vol = thisWeek.reduce((a, s) => a + sessionVolume(s), 0);
   const ph = PHASES[curPhase()];
   el.innerHTML = `
+    ${coachBannerHtml()}
     <button class="phase-chip" id="phaseChip" style="--c:${ph.color}"><span class="pc-ico">${ph.icon}</span><span class="pc-main"><b>${phaseLabel()}</b><span>${db.phase ? ph.tagline + ' · ' + Math.max(0, PHASE_DAYS - phaseDays()) + ' days left' : ''}</span></span><span class="pc-chg">Change</span></button>
     <div class="hero">
       <div class="stat"><div class="v">${new Set(thisWeek.map(s => s.date)).size}</div><div class="l">Days this week</div></div>
@@ -274,6 +284,7 @@ function renderHome(el){
     </div>`;
   el.querySelectorAll('.group-card').forEach(b => b.addEventListener('click', () => push({v:'focus', g: b.dataset.g, date: todayStr()})));
   $('#phaseChip').onclick = () => push({v:'phase'});
+  bindCoachBanner();
 }
 
 /* ---------- Workout: Focus picker ---------- */
@@ -321,7 +332,7 @@ function renderGroup(el, v){
         return `<div class="row" role="button" data-id="${e.id}" style="--c:${g.color}">
           <div class="badge-num">${i + 1}</div>
           <div class="main"><div class="name">${esc(e.name)}</div>
-            <div class="meta">${e.sets} × ${repsLabel(e)} · rest ${restLabel(e.rest)}${last && !done ? ` · last ${fmtNum(Math.max(...last.sets.map(s => s.w)))} lb` : ''}</div></div>
+            <div class="meta">${e.item.notes ? '🧠 ' : ''}${e.sets} × ${repsLabel(e)} · rest ${restLabel(e.rest)}${last && !done ? ` · last ${fmtNum(Math.max(...last.sets.map(s => s.w)))} lb` : ''}</div></div>
           ${v.editing
             ? `<button class="mini-btn" data-act="up" data-id="${e.id}" aria-label="Move up">↑</button><button class="mini-btn" data-act="edit" data-id="${e.id}">Edit</button>`
             : done ? `<span class="pill done">✓ Done</span>` : `<svg class="chev" width="20" height="20" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>`}
@@ -390,6 +401,7 @@ function renderLog(el, v){
     <div class="last-card first" style="--c:${g.color}"><div class="lc-head"><span class="lc-title">First time</span></div>
       <div class="lc-first">No history for this exercise yet. Today sets your baseline 💪</div></div>`}
     <div class="target-row" style="--c:${PHASES[tphase].color}"><div><span class="tr-lbl">Target · ${PHASES[tphase].short}</span><b>${e.sets} sets × ${repsLabel(e)} reps</b></div><div class="rest"><span class="tr-lbl">Rest</span><b>⏱ ${restLabel(e.rest)}</b></div></div>
+    ${e.item && e.item.notes ? `<div class="coach-note"><span class="cn-lbl">🧠 Coach note</span>${esc(e.item.notes)}</div>` : ''}
     <div class="sets-head"><div>Set</div><div style="text-align:center">Weight</div><div style="text-align:center">Reps</div><div></div></div>
     <div id="sets">
       ${v.draft.map((s, i) => `
@@ -744,6 +756,7 @@ function renderSettings(el){
     <div class="set-group">
       <button class="set-item" id="phaseBtn"><span class="grow">${db.phase ? PHASES[db.phase.id].icon + ' ' + PHASES[db.phase.id].name : 'Not set'}<span class="sub">${db.phase ? phaseLabel() + ' · started ' + fmtDay(db.phase.start) : 'Pick bulking or cutting'} · tap to change</span></span>›</button>
     </div>
+    ${coachSettingsHtml()}
     <div class="section-title">Backup</div>
     <div class="set-group">
       <button class="set-item" id="exportBtn"><span class="grow">Export backup<span class="sub">${lastBackup ? 'Last backup ' + daysAgo(lastBackup) : 'Never backed up'} · saves a .json file</span></span>⬇︎</button>
@@ -765,6 +778,7 @@ function renderSettings(el){
   el.querySelectorAll('[data-g]').forEach(b => b.onclick = () => { switchTab('workout'); push({v:'focus', g: b.dataset.g, date: todayStr()}); });
   $('#exportBtn').onclick = exportData;
   $('#phaseBtn').onclick = () => { switchTab('workout'); push({v:'phase'}); };
+  bindCoachSettings();
   $('#importBtn').onclick = () => $('#fileIn').click();
   $('#fileIn').onchange = importData;
   $('#resetEx').onclick = () => {
@@ -785,8 +799,12 @@ function renderSettings(el){
     db = freshDb(); save(); stacks.workout = [{v:'phase'}]; switchTab('workout'); toast('All data erased');
   };
 }
+function exportPayload(){
+  const now = new Date().toISOString();
+  return {app: 'liftlog', appVersion: APP_VERSION, exported: now, exportedAt: now, ...db};
+}
 async function exportData(){
-  const json = JSON.stringify({app: 'liftlog', appVersion: APP_VERSION, exported: new Date().toISOString(), ...db}, null, 2);
+  const json = JSON.stringify(exportPayload(), null, 2);
   const name = `liftlog-backup-${todayStr()}.json`;
   const file = new File([json], name, {type: 'application/json'});
   localStorage.setItem('liftlog.lastBackup', todayStr());
@@ -805,12 +823,224 @@ function importData(ev){
       const d = JSON.parse(r.result);
       if (!d.exercises || !Array.isArray(d.sessions)) throw new Error('bad');
       if (!confirm(`Replace current data with backup (${d.sessions.length} workouts)?`)) return;
-      db = migrate({version: d.version || 1, exercises: d.exercises, plans: d.plans, phase: d.phase === undefined ? db.phase : d.phase, sessions: d.sessions});
+      db = migrate({version: d.version || 1, exercises: d.exercises, plans: d.plans, phase: d.phase === undefined ? db.phase : d.phase, coach: d.coach || db.coach, sessions: d.sessions});
       save(); render(); toast('Backup restored');
     } catch (e) { toast('That file is not a Lift Log backup'); }
     ev.target.value = '';
   };
   r.readAsText(f);
+}
+
+/* ---------- Coach plan (down) ---------- */
+const FOCUS_IDS = gid => FOCUS_META[gid].map(f => f.id).concat('all');
+const tgtStr = it => `${it.sets}×${it.min === it.max ? it.min : it.min + '–' + it.max}${it.rest ? ' · ' + restLabel(it.rest) : ''}`;
+const Coach = {
+  url: 'plan.json',
+  async check(manual){
+    let plan;
+    try {
+      const res = await fetch(this.url + '?t=' + Date.now(), {cache: 'no-store'});
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      plan = await res.json();
+    } catch (e) { if (manual) toast('Could not reach coach plan'); return {ok: false, error: String(e)}; }
+    db.coach.lastCheck = new Date().toISOString();
+    const result = this.apply(plan);
+    persist();
+    if (manual) toast(result.applied ? 'Plan updated' : 'Plan is up to date');
+    if (result.applied) render();
+    return result;
+  },
+  /** apply a plan object if newer; returns {applied, changes} */
+  apply(plan){
+    if (!plan || typeof plan !== 'object' || plan.schema !== 1 || !Number.isInteger(plan.version)) return {applied: false, error: 'invalid plan'};
+    if (plan.version <= (db.coach.planVersion || 0)) return {applied: false};
+    const changes = [];
+    let created = 0;
+    for (const ph of Object.keys(plan.phases || {})) {
+      if (!PHASES[ph]) continue;
+      for (const gid of Object.keys(plan.phases[ph] || {})) {
+        if (!groupOf(gid)) continue;
+        const pool = db.exercises[gid];
+        for (const fid of Object.keys(plan.phases[ph][gid] || {})) {
+          if (!FOCUS_IDS(gid).includes(fid)) continue;
+          const list = plan.phases[ph][gid][fid];
+          if (!Array.isArray(list)) continue;
+          const items = [];
+          for (const p of list) {
+            if (!p || typeof p !== 'object') continue;
+            let ex = p.id ? pool.find(x => x.id === p.id) : null;
+            if (!ex && p.name) ex = pool.find(x => lc(x.name) === lc(p.name));
+            if (!ex && p.name) { ex = {id: uid(), name: String(p.name).trim().slice(0, 60)}; pool.push(ex); created++; }
+            if (!ex || items.some(i => i.exId === ex.id)) continue;
+            const num = (v, lo, hi, dflt) => Number.isFinite(+v) && +v >= lo && +v <= hi ? Math.round(+v) : dflt;
+            const fb = PHASES[ph].fallback;
+            const sets = num(p.sets, 1, 20, fb[0]);
+            let min = num(p.reps && p.reps[0] !== undefined ? p.reps[0] : p.min, 1, 100, fb[1]);
+            let max = num(p.reps && p.reps[1] !== undefined ? p.reps[1] : p.max, 1, 100, Math.max(min, fb[2]));
+            if (max < min) [min, max] = [max, min];
+            const it = {exId: ex.id, sets, min, max, rest: num(p.rest, 0, 900, fb[3])};
+            if (p.notes) it.notes = String(p.notes).slice(0, 400);
+            items.push(it);
+          }
+          const old = db.plans[ph][gid][fid] || [];
+          const nameOf = id => (pool.find(x => x.id === id) || {}).name || '?';
+          const diffs = [];
+          for (const it of items) {
+            const o = old.find(x => x.exId === it.exId);
+            if (!o) diffs.push(`+ ${nameOf(it.exId)} ${tgtStr(it)}`);
+            else if (tgtStr(o) !== tgtStr(it)) diffs.push(`${nameOf(it.exId)} ${tgtStr(o)} → ${tgtStr(it)}`);
+            else if ((o.notes || '') !== (it.notes || '') && it.notes) diffs.push(`${nameOf(it.exId)}: new note`);
+          }
+          for (const o of old) if (!items.some(x => x.exId === o.exId)) diffs.push(`− ${nameOf(o.exId)}`);
+          if (!diffs.length && old.map(x => x.exId).join() !== items.map(x => x.exId).join()) diffs.push('reordered');
+          db.plans[ph][gid][fid] = items;
+          if (diffs.length) changes.push({where: `${PHASES[ph].short} · ${groupOf(gid).name} · ${focusName(gid, fid)}`, diffs});
+        }
+      }
+    }
+    syncAll(db); // new exercises show up under All; history untouched
+    db.coach.planVersion = plan.version;
+    db.coach.planUpdatedAt = plan.updatedAt || null;
+    db.coach.message = plan.message || '';
+    db.coach.banner = (changes.length || plan.message) ? {version: plan.version, message: plan.message || '', changes, at: new Date().toISOString()} : null;
+    save();
+    return {applied: true, changes, created};
+  }
+};
+function coachBannerHtml(){
+  const b = db.coach && db.coach.banner;
+  if (!b) return '';
+  const lines = b.changes.flatMap(c => c.diffs.map(d => ({w: c.where, d})));
+  const shown = lines.slice(0, 6);
+  return `<div class="coach-banner" id="coachBanner">
+    <div class="cb-head"><span>🧠 Coach updated your plan</span><button class="cb-x" id="cbX" aria-label="Dismiss">✕</button></div>
+    ${b.message ? `<div class="cb-msg">${esc(b.message)}</div>` : ''}
+    ${shown.length ? `<ul class="cb-list">${shown.map(l => `<li><b>${esc(l.w)}</b> ${esc(l.d)}</li>`).join('')}</ul>${lines.length > shown.length ? `<div class="cb-more">+${lines.length - shown.length} more change${lines.length - shown.length > 1 ? 's' : ''}</div>` : ''}` : ''}
+    <div class="cb-foot">Plan v${b.version}${db.coach.planUpdatedAt ? ' · ' + esc(String(db.coach.planUpdatedAt).slice(0, 10)) : ''}</div>
+  </div>`;
+}
+function bindCoachBanner(){
+  if ($('#cbX')) $('#cbX').onclick = () => { db.coach.banner = null; persist(); render(); };
+}
+
+/* ---------- Coach Sync (up): GitHub contents API ---------- */
+const SYNC_KEY = 'liftlog.sync'; // token lives only here, never in exports
+const Sync = {
+  owner: 'jbozarth206', repo: 'lift-log-data', path: 'data/liftlog.json',
+  timer: null, busy: false, again: false,
+  get s(){ try { return JSON.parse(localStorage.getItem(SYNC_KEY)) || {}; } catch (e) { return {}; } },
+  set(patch){ localStorage.setItem(SYNC_KEY, JSON.stringify(Object.assign(this.s, patch))); },
+  get enabled(){ return !!this.s.token; },
+  api(){ return `https://api.github.com/repos/${this.owner}/${this.repo}/contents/${this.path}`; },
+  headers(){ return {'Authorization': 'Bearer ' + this.s.token, 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'}; },
+  markDirty(){
+    if (!this.enabled) return;
+    this.set({pending: true});
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.push(), this.debounceMs);
+  },
+  debounceMs: 4000,
+  b64(str){ const bytes = new TextEncoder().encode(str); let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(bin); },
+  explain(status, body){
+    const msg = (body && body.message) || '';
+    if (status === 401) return 'Token is invalid or expired. Create a new one and paste it here.';
+    if (status === 403 && /rate limit/i.test(msg)) return 'GitHub rate limit hit. Will retry later.';
+    if (status === 403) return 'Token has no write access. It needs Contents: Read and write on lift-log-data.';
+    if (status === 404) return 'Repo not found, or the token has no access to jbozarth206/lift-log-data.';
+    return `GitHub error ${status}${msg ? ': ' + msg : ''}`;
+  },
+  async getSha(){
+    const res = await fetch(this.api() + '?t=' + Date.now(), {headers: this.headers(), cache: 'no-store'});
+    if (res.status === 404) {
+      const body = await res.json().catch(() => ({}));
+      // file missing is fine (first sync); repo missing is not
+      const repoRes = await fetch(`https://api.github.com/repos/${this.owner}/${this.repo}`, {headers: this.headers(), cache: 'no-store'});
+      if (!repoRes.ok) throw {status: repoRes.status, body: await repoRes.json().catch(() => body)};
+      return null;
+    }
+    if (!res.ok) throw {status: res.status, body: await res.json().catch(() => ({}))};
+    return (await res.json()).sha;
+  },
+  /** push full export; returns true on success */
+  async push(manual){
+    clearTimeout(this.timer);
+    if (!this.enabled) return false;
+    if (this.busy) { this.again = true; return false; }
+    if (!navigator.onLine) { this.set({pending: true, lastError: 'Offline · will sync when back online'}); this.refreshUi(); return false; }
+    this.busy = true; this.refreshUi();
+    try {
+      const content = this.b64(JSON.stringify(exportPayload(), null, 1));
+      let sha = this.s.sha;
+      if (sha === undefined) sha = await this.getSha();
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const res = await fetch(this.api(), {method: 'PUT', headers: {...this.headers(), 'Content-Type': 'application/json'}, cache: 'no-store',
+          body: JSON.stringify({message: `Lift Log sync ${new Date().toISOString()}`, content, ...(sha ? {sha} : {})})});
+        if (res.ok) {
+          const body = await res.json();
+          this.set({sha: body.content && body.content.sha, pending: false, lastSync: new Date().toISOString(), lastError: ''});
+          if (manual) toast('✓ Synced to coach');
+          return true;
+        }
+        const body = await res.json().catch(() => ({}));
+        if (res.status === 409 || res.status === 422 || (res.status === 400 && /sha/i.test(body.message || ''))) { sha = await this.getSha(); continue; } // sha conflict: refetch & retry
+        throw {status: res.status, body};
+      }
+      throw {status: 409, body: {message: 'kept conflicting'}};
+    } catch (e) {
+      const offline = !e || e.status === undefined;
+      const err = offline ? 'Network error · will retry when online' : this.explain(e.status, e.body);
+      this.set({pending: true, lastError: err, ...(offline ? {} : {sha: undefined})});
+      if (manual) toast(offline ? 'Offline · queued' : 'Sync failed');
+      return false;
+    } finally {
+      this.busy = false; this.refreshUi();
+      if (this.again) { this.again = false; this.markDirty(); }
+    }
+  },
+  retryPending(){ if (this.enabled && this.s.pending) this.push(); },
+  refreshUi(){ if (tab === 'settings' && cur().v === 'settings') render(); }
+};
+function syncStatusText(){
+  const s = Sync.s;
+  if (!s.token) return {cls: 'off', t: 'Not connected'};
+  if (Sync.busy) return {cls: 'busy', t: 'Syncing…'};
+  if (s.lastError) return {cls: 'err', t: s.lastError};
+  if (s.pending) return {cls: 'busy', t: 'Changes waiting to sync'};
+  if (s.lastSync) return {cls: 'ok', t: 'Synced ' + timeAgo(s.lastSync)};
+  return {cls: 'busy', t: 'Connected · not synced yet'};
+}
+function timeAgo(iso){
+  const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (m < 1) return 'just now'; if (m < 60) return m + ' min ago';
+  const h = Math.round(m / 60); if (h < 24) return h + ' h ago';
+  return Math.round(h / 24) + ' d ago';
+}
+function coachSettingsHtml(){
+  const s = Sync.s, st = syncStatusText();
+  return `<div class="section-title">Coach sync</div>
+    <div class="set-group">
+      <div class="set-item" style="font-weight:600"><span class="grow">Workout data → coach<span class="sub sync-${st.cls}" id="syncStatus">${esc(st.t)}</span></span><span class="sync-dot sync-${st.cls}"></span></div>
+      ${s.token ? `
+      <button class="set-item" id="syncNow"><span class="grow">Sync now<span class="sub">Uploads your full log to the private lift-log-data repo</span></span>⟳</button>
+      <button class="set-item red" id="syncOff"><span class="grow">Disconnect<span class="sub">Removes the token from this phone</span></span></button>` : `
+      <div class="set-item token-row"><input class="text-input" id="tokenIn" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste GitHub token (github_pat_…)"><button class="mini-btn" id="tokenSave">Connect</button></div>`}
+      <div class="set-item" style="font-weight:600"><span class="grow">Coach plan<span class="sub">Version ${db.coach.planVersion}${db.coach.planUpdatedAt ? ' · updated ' + esc(String(db.coach.planUpdatedAt).slice(0, 10)) : ''}${db.coach.lastCheck ? ' · checked ' + timeAgo(db.coach.lastCheck) : ''}</span></span><button class="mini-btn" id="planCheck">Check</button></div>
+    </div>
+    <p class="note">The token is stored only on this phone and is never included in backups. Use a fine-grained token limited to <b>lift-log-data</b> with Contents: Read and write.</p>`;
+}
+function bindCoachSettings(){
+  if ($('#syncNow')) $('#syncNow').onclick = () => Sync.push(true);
+  if ($('#syncOff')) $('#syncOff').onclick = () => { if (!confirm('Disconnect Coach Sync? Your workouts stay on this phone.')) return; localStorage.removeItem(SYNC_KEY); render(); toast('Disconnected'); };
+  if ($('#tokenSave')) $('#tokenSave').onclick = async () => {
+    const t = $('#tokenIn').value.trim();
+    if (!/^(github_pat_|ghp_)[A-Za-z0-9_]{20,}$/.test(t)) { toast('That does not look like a GitHub token'); return; }
+    localStorage.setItem(SYNC_KEY, JSON.stringify({token: t, pending: true}));
+    render();
+    const ok = await Sync.push(true);
+    if (!ok && !navigator.onLine) return;
+    render();
+  };
+  $('#planCheck').onclick = () => Coach.check(true);
 }
 
 /* ---------- Boot ---------- */
@@ -824,7 +1054,10 @@ function checkPhase(){
 }
 if (needsPhase()) stacks.workout = [{v:'phase'}];
 render();
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkPhase(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { checkPhase(); Sync.retryPending(); Coach.check(); } });
+window.addEventListener('online', () => { Sync.retryPending(); Coach.check(); });
+Sync.retryPending();
+Coach.check();
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   // When a new version's service worker takes over, reload once so the new code runs.
   const hadController = !!navigator.serviceWorker.controller;

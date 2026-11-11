@@ -1,0 +1,191 @@
+{
+  "schema": 1,
+  "version": 1,
+  "updatedAt": "2026-11-11T00:00:00Z",
+  "message": "",
+  "phases": {
+    "bulk": {
+      "back": {
+        "upper": [
+          {"name": "Pull-Up", "sets": 4, "reps": [5, 8], "rest": 180},
+          {"name": "Lat Pulldown", "sets": 4, "reps": [6, 8], "rest": 150},
+          {"name": "Wide-Grip Seated Row", "sets": 4, "reps": [6, 8], "rest": 150},
+          {"name": "Barbell Shrug", "sets": 4, "reps": [6, 8], "rest": 120},
+          {"name": "Rear Delt Fly", "sets": 3, "reps": [10, 12], "rest": 90}
+        ],
+        "mid": [
+          {"name": "Barbell Row", "sets": 5, "reps": [5, 8], "rest": 180},
+          {"name": "Chest-Supported T-Bar Row", "sets": 4, "reps": [6, 8], "rest": 150},
+          {"name": "Seated Cable Row", "sets": 4, "reps": [6, 8], "rest": 120},
+          {"name": "Single-Arm DB Row", "sets": 4, "reps": [6, 8], "rest": 120}
+        ],
+        "lower": [
+          {"name": "Deadlift", "sets": 5, "reps": [3, 5], "rest": 240},
+          {"name": "Rack Pull", "sets": 4, "reps": [4, 6], "rest": 180},
+          {"name": "Good Morning", "sets": 4, "reps": [6, 8], "rest": 150},
+          {"name": "Back Extension", "sets": 3, "reps": [8, 10], "rest": 90}
+        ]
+      },
+      "chest": {
+        "upper": [
+          {"name": "Incline Bench Press", "sets": 5, "reps": [4, 6], "rest": 180},
+          {"name": "Incline DB Press", "sets": 4, "reps": [6, 8], "rest": 150},
+          {"name": "Landmine Press", "sets": 3, "reps": [6, 8], "rest": 120},
+          {"name": "Incline Machine Press", "sets": 3, "reps": [6, 8], "rest": 120}
+        ],
+        "mid": [
+          {"name": "Bench Press", "sets": 5, "reps": [4, 6], "rest": 180},
+          {"name": "DB Bench Press", "sets": 4, "reps": [6, 8], "rest": 150},
+          {"name": "Machine Chest Press", "sets": 3, "reps": [6, 8], "rest": 120},
+          {"name": "Cable Fly", "sets": 3, "reps": [8, 10], "rest": 90}
+        ],
+        "lower": [
+          {"name": "Decline Bench Press", "sets": 5, "reps": [4, 6], "rest": 180},
+          {"name": "Dips", "sets": 4, "reps": [6, 8], "rest": 150},
+          {"name": "Decline DB Press", "sets": 4, "reps": [6, 8], "rest": 120},
+          {"name": "Bench Press", "sets": 3, "reps": [5, 6], "rest": 180}
+        ]
+      },
+      "legs": {
+        "quads": [
+          {"name": "Back Squat", "sets": 5, "reps": [4, 6], "rest": 240},
+          {"name": "Hack Squat", "sets": 4, "reps": [6, 8], "rest": 180},
+          {"name": "Leg Press", "sets": 4, "reps": [6, 8], "rest": 150},
+          {"name": "Bulgarian Split Squat", "sets": 3, "reps": [6, 8], "rest": 120}
+        ],
+        "hamstrings": [
+          {"name": "Romanian Deadlift", "sets": 4, "reps": [5, 8], "rest": 180},
+          {"name": "Good Morning", "sets": 4, "reps": [6, 8], "rest": 150},
+          {"name": "Leg Curl", "sets": 4, "reps": [6, 8], "rest": 90},
+          {"name": "Nordic Curl", "sets": 3, "reps": [4, 6], "rest": 120}
+        ],
+        "glutes": [
+          {"name": "Hip Thrust", "sets": 5, "reps": [5, 8], "rest": 150},
+          {"name": "Bulgarian Split Squat", "sets": 4, "reps": [6, 8], "rest": 120},
+          {"name": "Romanian Deadlift", "sets": 4, "reps": [6, 8], "rest": 150},
+          {"name": "Walking Lunge", "sets": 3, "reps": [8, 10], "rest": 90}
+        ],
+        "calves": [
+          {"name": "Calf Raise", "sets": 5, "reps": [6, 10], "rest": 90},
+          {"name": "Seated Calf Raise", "sets": 4, "reps": [8, 10], "rest": 90},
+          {"name": "Leg Press Calf Raise", "sets": 4, "reps": [8, 12], "rest": 90}
+        ]
+      },
+      "shoulders": {
+        "front": [
+          {"name": "Overhead Press", "sets": 5, "reps": [4, 6], "rest": 180},
+          {"name": "Seated DB Press", "sets": 4, "reps": [6, 8], "rest": 150},
+          {"name": "Arnold Press", "sets": 3, "reps": [6, 8], "rest": 120},
+          {"name": "Front Raise", "sets": 3, "reps": [8, 10], "rest": 90}
+        ],
+        "side": [
+          {"name": "Seated DB Press", "sets": 4, "reps": [6, 8], "rest": 150},
+          {"name": "Upright Row", "sets": 4, "reps": [6, 8], "rest": 120},
+          {"name": "Lateral Raise", "sets": 4, "reps": [8, 12], "rest": 90},
+          {"name": "Cable Lateral Raise", "sets": 3, "reps": [8, 12], "rest": 90}
+        ],
+        "rear": [
+          {"name": "Rear Delt Fly", "sets": 4, "reps": [8, 12], "rest": 90},
+          {"name": "Face Pull", "sets": 4, "reps": [8, 12], "rest": 90},
+          {"name": "Reverse Pec Deck", "sets": 3, "reps": [8, 12], "rest": 90},
+          {"name": "DB Shrug", "sets": 4, "reps": [6, 8], "rest": 120}
+        ]
+      }
+    },
+    "cut": {
+      "back": {
+        "upper": [
+          {"name": "Lat Pulldown", "sets": 4, "reps": [10, 12], "rest": 75},
+          {"name": "Wide-Grip Seated Row", "sets": 3, "reps": [12, 15], "rest": 60},
+          {"name": "Straight-Arm Pulldown", "sets": 3, "reps": [12, 15], "rest": 45},
+          {"name": "Rear Delt Fly", "sets": 3, "reps": [15, 20], "rest": 45},
+          {"name": "Face Pull", "sets": 3, "reps": [15, 20], "rest": 45}
+        ],
+        "mid": [
+          {"name": "Seated Cable Row", "sets": 4, "reps": [10, 12], "rest": 75},
+          {"name": "Single-Arm DB Row", "sets": 3, "reps": [10, 12], "rest": 60},
+          {"name": "Chest-Supported T-Bar Row", "sets": 3, "reps": [10, 12], "rest": 75},
+          {"name": "Machine Row", "sets": 3, "reps": [12, 15], "rest": 60},
+          {"name": "Straight-Arm Pulldown", "sets": 3, "reps": [12, 15], "rest": 45}
+        ],
+        "lower": [
+          {"name": "Back Extension", "sets": 4, "reps": [12, 15], "rest": 60},
+          {"name": "Good Morning", "sets": 3, "reps": [10, 12], "rest": 75},
+          {"name": "Rack Pull", "sets": 3, "reps": [8, 10], "rest": 90},
+          {"name": "Reverse Hyper", "sets": 3, "reps": [12, 15], "rest": 60},
+          {"name": "Seated Cable Row", "sets": 3, "reps": [12, 15], "rest": 60}
+        ]
+      },
+      "chest": {
+        "upper": [
+          {"name": "Incline DB Press", "sets": 4, "reps": [10, 12], "rest": 75},
+          {"name": "Incline Machine Press", "sets": 3, "reps": [12, 15], "rest": 60},
+          {"name": "Low-to-High Cable Fly", "sets": 3, "reps": [15, 20], "rest": 45},
+          {"name": "Landmine Press", "sets": 3, "reps": [12, 15], "rest": 60}
+        ],
+        "mid": [
+          {"name": "Machine Chest Press", "sets": 4, "reps": [10, 12], "rest": 75},
+          {"name": "DB Bench Press", "sets": 3, "reps": [10, 12], "rest": 75},
+          {"name": "Pec Deck", "sets": 3, "reps": [15, 20], "rest": 45},
+          {"name": "Cable Fly", "sets": 3, "reps": [15, 20], "rest": 45},
+          {"name": "Push-Up", "sets": 3, "reps": [15, 20], "rest": 45}
+        ],
+        "lower": [
+          {"name": "Dips", "sets": 4, "reps": [10, 15], "rest": 60},
+          {"name": "Decline DB Press", "sets": 3, "reps": [10, 12], "rest": 75},
+          {"name": "High-to-Low Cable Fly", "sets": 3, "reps": [15, 20], "rest": 45},
+          {"name": "Machine Chest Press", "sets": 3, "reps": [12, 15], "rest": 60}
+        ]
+      },
+      "legs": {
+        "quads": [
+          {"name": "Leg Press", "sets": 4, "reps": [12, 15], "rest": 75},
+          {"name": "Hack Squat", "sets": 3, "reps": [10, 12], "rest": 90},
+          {"name": "Leg Extension", "sets": 4, "reps": [15, 20], "rest": 45},
+          {"name": "Walking Lunge", "sets": 3, "reps": [12, 15], "rest": 60},
+          {"name": "Goblet Squat", "sets": 3, "reps": [12, 15], "rest": 60}
+        ],
+        "hamstrings": [
+          {"name": "Leg Curl", "sets": 4, "reps": [12, 15], "rest": 45},
+          {"name": "Seated Leg Curl", "sets": 3, "reps": [12, 15], "rest": 45},
+          {"name": "Romanian Deadlift", "sets": 3, "reps": [10, 12], "rest": 75},
+          {"name": "Nordic Curl", "sets": 3, "reps": [6, 10], "rest": 60}
+        ],
+        "glutes": [
+          {"name": "Hip Thrust", "sets": 4, "reps": [10, 15], "rest": 60},
+          {"name": "Cable Kickback", "sets": 3, "reps": [15, 20], "rest": 45},
+          {"name": "Hip Abduction", "sets": 3, "reps": [15, 20], "rest": 45},
+          {"name": "Walking Lunge", "sets": 3, "reps": [12, 15], "rest": 60},
+          {"name": "Bulgarian Split Squat", "sets": 3, "reps": [10, 12], "rest": 60}
+        ],
+        "calves": [
+          {"name": "Calf Raise", "sets": 4, "reps": [15, 20], "rest": 45},
+          {"name": "Seated Calf Raise", "sets": 4, "reps": [15, 20], "rest": 45},
+          {"name": "Single-Leg Calf Raise", "sets": 3, "reps": [12, 15], "rest": 30},
+          {"name": "Leg Press Calf Raise", "sets": 3, "reps": [15, 20], "rest": 45}
+        ]
+      },
+      "shoulders": {
+        "front": [
+          {"name": "Seated DB Press", "sets": 4, "reps": [10, 12], "rest": 75},
+          {"name": "Arnold Press", "sets": 3, "reps": [10, 12], "rest": 60},
+          {"name": "Machine Shoulder Press", "sets": 3, "reps": [12, 15], "rest": 60},
+          {"name": "Front Raise", "sets": 3, "reps": [12, 15], "rest": 45}
+        ],
+        "side": [
+          {"name": "Lateral Raise", "sets": 4, "reps": [15, 20], "rest": 45},
+          {"name": "Cable Lateral Raise", "sets": 3, "reps": [12, 15], "rest": 45},
+          {"name": "Machine Lateral Raise", "sets": 3, "reps": [15, 20], "rest": 45},
+          {"name": "Upright Row", "sets": 3, "reps": [12, 15], "rest": 60}
+        ],
+        "rear": [
+          {"name": "Reverse Pec Deck", "sets": 4, "reps": [15, 20], "rest": 45},
+          {"name": "Face Pull", "sets": 3, "reps": [15, 20], "rest": 45},
+          {"name": "Rear Delt Cable Fly", "sets": 3, "reps": [15, 20], "rest": 45},
+          {"name": "Rear Delt Fly", "sets": 3, "reps": [15, 20], "rest": 45},
+          {"name": "DB Shrug", "sets": 3, "reps": [12, 15], "rest": 45}
+        ]
+      }
+    }
+  }
+}
