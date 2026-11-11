@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "version": 1,
-  "updatedAt": "2026-11-11T00:00:00Z",
-  "message": "",
+  "version": 2,
+  "updatedAt": "2026-11-11T21:05:00Z",
+  "message": "Coach here. Bulk block is on. I rebuilt your Shoulders · All day off today's session.\n- Overhead press is the anchor: hit 115×8, then move to 120.\n- Front raises are out. Your pressing already hammers front delts, so those sets go to side delts.\n- Lateral raises move to the end as FST-7: 7 sets, 30-35s rest, chase the pump. Side delts build the width.\n- Log working sets only, not warm-ups, so your numbers stay honest.",
   "phases": {
     "bulk": {
       "back": {
@@ -89,6 +89,14 @@
           {"name": "Face Pull", "sets": 4, "reps": [8, 12], "rest": 90},
           {"name": "Reverse Pec Deck", "sets": 3, "reps": [8, 12], "rest": 90},
           {"name": "DB Shrug", "sets": 4, "reps": [6, 8], "rest": 120}
+        ],
+        "all": [
+          {"id": "mwcf199p92ng5", "name": "Overhead Press", "sets": 4, "reps": [5, 8], "rest": 180, "notes": "Ramp up with 2-3 light sets (don't log them). Target 115×8 on the top set, then go to 120. Brace hard, squeeze glutes, bar over mid-foot."},
+          {"id": "mwcf199pmuq5x", "name": "Seated DB Press", "sets": 3, "reps": [8, 10], "rest": 120, "notes": "You're pre-fatigued from overhead press. Use 55s and own all 3 sets; go up when every set hits 10."},
+          {"id": "mwcf199pwjnp2", "name": "Face Pull", "sets": 4, "reps": [12, 15], "rest": 60, "notes": "Start around 117 and build to 132+. Pull to the forehead, elbows high, hold 1s."},
+          {"id": "mwcf199phclse", "name": "Reverse Pec Deck", "sets": 3, "reps": [12, 15], "rest": 75, "notes": "Use 180 for all 3 sets. When all 3 hit 15, add weight. No swinging, lead with the elbows."},
+          {"id": "mwcf199pydfhw", "name": "DB Shrug", "sets": 4, "reps": [8, 12], "rest": 90, "notes": "225×13 says you can go heavier. Push the top weight up until you land in 8-12. Pause 1s at the top."},
+          {"id": "mwcf199pqrb69", "name": "Lateral Raise", "sets": 7, "reps": [10, 12], "rest": 35, "notes": "FST-7 finisher: 7 sets, 30-35s rest. Start around 105-110 and keep it there even as reps drop. Strict form, pause at the top."}
         ]
       }
     },
