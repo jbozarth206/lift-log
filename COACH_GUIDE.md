@@ -22,9 +22,9 @@ gh api 'repos/jbozarth206/lift-log-data/commits?path=data/liftlog.json&per_page=
 ### Data format (same as the app's backup export)
 ```jsonc
 {
-  "app": "liftlog", "appVersion": "6.0",
+  "app": "liftlog", "appVersion": "7.0",
   "exportedAt": "2026-11-11T18:40:00.000Z",      // when the phone pushed it
-  "version": 6,                                   // data schema version
+  "version": 7,                                   // data schema version
   "phase": {"id": "bulk", "start": "2026-11-11"}, // current 4-week block (bulk|cut), null if not chosen yet
   "exercises": { "back": [{"id": "mhx2k1abcde", "name": "Lat Pulldown"}], "chest": [], "legs": [], "shoulders": [], "arms": [] },
   "plans": { "bulk": { "back": { "upper": [{"exId": "mhx2k1abcde", "sets": 4, "min": 6, "max": 8, "rest": 150, "notes": "…"}], "mid": [], "lower": [], "all": [] } }, "cut": {} },
@@ -95,6 +95,33 @@ gh api 'repos/jbozarth206/lift-log-data/commits?path=data/liftlog.json&per_page=
   - `meal`: `breakfast`, `lunch`, `dinner` or `snack`. `qty` is free text. `kcal` is kcal; `p`/`c`/`f` are **grams**. If he left kcal blank, the app filled in `4p + 4c + 9f`.
   - Daily totals = sum of `entries` for a `date`. Days with no entries mean **not logged**, not zero intake.
   - The coach targets he sees are in `coach.nutrition.<phase>` once a plan with `nutrition` has been applied.
+- **Lab results from MyChart** (top-level `labs`, v7+; treat a missing key as empty). Imported read-only from his Epic MyChart (Orlando Health) through a SMART on FHIR patient connection (FHIR R4 `Observation`, category `laboratory`). These are separate from his **manual** notes in `peds.labs`, which are unchanged.
+  ```jsonc
+  "labs": {
+    "source": {"system": "epic-mychart", "name": "Orlando Health", "endpointId": "orlando-health", "env": "production",
+               "fhirBase": "https://epicproxy.et1131.epichosted.com/FHIRProxy/api/FHIR/R4"},   // null until first import
+    "connectedAt": "2026-11-17T20:10:00.000Z",   // ISO UTC; null after he disconnects
+    "lastSync": "2026-11-17T20:10:04.000Z",      // ISO UTC of the last successful import
+    "results": [{"id": "eXk…3", "date": "2026-10-28", "code": "4544-3", "name": "Hematocrit", "value": 53.1, "unit": "%",
+                 "refLow": 37.5, "refHigh": 51, "flag": "H", "text": "", "reportId": "eDR…3"}],
+    "reports": {"eDR…3": {"name": "CBC W/O DIFFERENTIAL", "date": "2026-10-28"}}
+  }
+  ```
+  | Field | Unit / type | Notes |
+  |---|---|---|
+  | `results[].id` | string | Epic FHIR Observation id (dedupe key). Component rows use `<id>#<n>`. |
+  | `results[].date` | `YYYY-MM-DD` | Draw (collection) date in his time zone (America/New_York), from `effectiveDateTime` (falls back to `issued`). |
+  | `results[].code` | LOINC code or `null` | Prefer this to `name` when matching markers (e.g. `2986-8` total testosterone, `2991-8` free T, `2243-4` estradiol, `4544-3` hematocrit, `718-7` hemoglobin, `13457-7` LDL, `2085-9` HDL, `2571-8` triglycerides, `2093-3` total cholesterol, `1742-6` ALT, `1920-8` AST, `2857-1` PSA). |
+  | `results[].name` | string | The lab's display name. |
+  | `results[].value` | number or `null` | Numeric result **in `unit`**, exactly as the lab reported it. `null` for qualitative results. Units are the lab's, not converted. |
+  | `results[].unit` | string | UCUM-style unit from the lab (`ng/dL`, `pg/mL`, `%`, `g/dL`, `mg/dL`, `IU/L`, `ng/mL`, …). |
+  | `results[].refLow` / `refHigh` | number or `null` (same unit as `value`) | The lab's reference range. One side can be `null` (e.g. HDL `>39`). `refText` appears only when the range was text that couldn't be parsed. |
+  | `results[].flag` | `"H"`, `"L"`, `"HH"`, `"LL"`, `"A"` or `null` | The lab's interpretation flag. If the lab sent none, the app sets H/L from the range. `null` = normal or unknown. |
+  | `results[].text` | string | Qualitative or comparator result (e.g. `"Non Reactive"`, `"<0.1"`), plus any lab comment. Empty for plain numbers. |
+  | `results[].reportId` | string or `null` | The FHIR DiagnosticReport (panel) it belongs to. Look up its name in `labs.reports`. |
+  | `results[].status` | optional string | Present only when not `final` (e.g. `"preliminary"`, `"amended"`, `"corrected"`). |
+
+  New results appear only after he opens the app and imports (each MyChart sign-in lasts about an hour, so imports happen when he taps Sync or reconnects). Use `lastSync` to know how fresh the list is. Report lab values factually against the lab's own ranges, and point out anything flagged. Don't diagnose or give dosing advice; suggest he discuss flagged results with his clinician.
 - **Profile**: `profile.height` is in **inches** (e.g. 70 = 5′10″), or `null` if not set. BMI = `703 × weight / height²`.
 - If `coach.planVersion` is lower than `plan.json`'s `version`, his phone hasn't opened the app since your last publish.
 
@@ -122,12 +149,12 @@ Tips:
 
 Coach reviews his data **three times a week** (e.g. Mon/Wed/Fri, spaced about 2–3 days apart). Each review:
 1. Pull `data/liftlog.json`. Check `exportedAt` and the last commit date. If nothing new has synced since the last review, say so and change nothing.
-2. Look at the sessions since the last review: top sets, estimated 1RM, rep targets hit or missed, and arm finishers. Look at the body-weight 7-day average trend against the phase goal, daily food totals against targets (logged days only), and the protocol log (doses logged vs planned, any health notes). Report the protocol data neutrally.
+2. Look at the sessions since the last review: top sets, estimated 1RM, rep targets hit or missed, and arm finishers. Look at the body-weight 7-day average trend against the phase goal, daily food totals against targets (logged days only), the protocol log (doses logged vs planned, any health notes), and any **new lab results** in `labs.results` since the last review (compare each marker with its previous value and the lab's range, and list flagged ones). Report protocol and lab data neutrally.
 3. If adjustments are warranted, edit `plan.json` (exercises, sets/reps/rest, `notes`, `nutrition`), write a short `message` summarizing the why, bump `version`, validate, and push. Small, specific changes beat full rewrites. Leave out combos you aren't changing.
 4. If no plan change is needed, don't bump the version just to send a message. Message him through the usual channel instead.
 
 ## 4. Rules
-1. **Never write to `lift-log-data`.** That includes `body`, `profile`, `peds` and `food`: read them, never edit them. Don't edit, delete, force-push or rewrite history there. It's his only cloud copy, and the app overwrites it.
+1. **Never write to `lift-log-data`.** That includes `body`, `profile`, `peds`, `food` and `labs`: read them, never edit them. Don't edit, delete, force-push or rewrite history there. It's his only cloud copy, and the app overwrites it.
 2. In `lift-log`, change **only `plan.json`** (and these docs if asked). Don't touch app code (`app.js`, `sw.js`, `index.html`, …) unless the user asks.
 3. **Always run `tools/validate_plan.py`** and push only if it prints `OK`. Every published change needs a version bump.
 4. Never put tokens, passwords or personal data in `plan.json`. It's public.

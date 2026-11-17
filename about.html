@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lift Log · About &amp; Privacy</title>
+<style>
+  body{margin:0;background:#0b0d12;color:#e9ecf2;font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  main{max-width:720px;margin:0 auto;padding:32px 20px 60px} h1{font-size:28px;margin:0 0 4px} h2{font-size:19px;margin:28px 0 8px}
+  p,li{color:#c4cad6} .muted{color:#8a93a6} a{color:#ff6b35} code{background:#151922;padding:1px 5px;border-radius:5px;font-size:14px}
+</style>
+</head>
+<body>
+<main>
+<h1>Lift Log</h1>
+<p class="muted">A personal workout, nutrition and health log. Web app (PWA), single user. Last updated November 2026.</p>
+
+<h2>What it does</h2>
+<p>Lift Log tracks workouts (sets, reps, weights), body weight and measurements, food, and personal health notes on the user's own phone. With the patient's permission it can read their <b>laboratory results</b> from an Epic MyChart account (SMART on FHIR, patient standalone launch) so they can see their bloodwork with reference ranges and trend charts next to their training log.</p>
+
+<h2>Data it reads from Epic</h2>
+<ul>
+  <li><b>Patient.Read</b>: the patient's name, only to confirm the right MyChart account is connected.</li>
+  <li><b>Observation.Search (Labs)</b>: laboratory results (value, unit, reference range, flag, date).</li>
+  <li><b>DiagnosticReport.Search (Results)</b>: lab report/panel names, used to group results by draw.</li>
+</ul>
+<p>The app is <b>read-only</b>: it never writes anything to Epic or MyChart.</p>
+
+<h2 id="privacy">Where data is stored (privacy)</h2>
+<ul>
+  <li>All data is stored in the browser storage (localStorage) on the user's own device.</li>
+  <li>MyChart access tokens are stored only on that device. They are never included in backups, never uploaded and never shared. The app is a public client with no client secret.</li>
+  <li>If the user turns on "Coach sync" in Settings, a copy of their log (including imported lab results, but never tokens) is uploaded to a <b>private GitHub repository owned by the user</b>, for their own personal coaching review. Nothing is sent to the app developer, advertisers or any other third party.</li>
+  <li>No analytics, tracking or advertising.</li>
+</ul>
+
+<h2 id="terms">Control, revocation and terms</h2>
+<ul>
+  <li>The user chooses whether to connect MyChart and can disconnect at any time in the app (Track › Labs › Disconnect), which deletes the tokens from the device. Access can also be revoked in MyChart (Account settings › Linked apps and devices).</li>
+  <li>Imported results can be deleted in the app; "Erase all data" in Settings deletes everything stored on the device.</li>
+</ul>
+
+<h2>Not medical advice</h2>
+<p>Lift Log displays the user's own records. It does not diagnose, interpret or give medical or dosing advice. Always discuss results with a clinician.</p>
+
+<h2>Contact</h2>
+<p>Source and issues: <a href="https://github.com/jbozarth206/lift-log">github.com/jbozarth206/lift-log</a></p>
+<p class="muted"><a href="./">Open Lift Log</a></p>
+</main>
+</body>
+</html>

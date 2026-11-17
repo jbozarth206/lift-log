@@ -9,7 +9,7 @@ const GROUPS = [
   {id:'arms', name:'Arms', color:'#ffc145', icon:'<path d="M5 18c1-5 3-8 6-10l2-3 3 1-1 4c2 1 3 3 3 5 0 2-2 4-5 4H8" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>'}
 ];
 const ARM_HOSTS = ['back', 'chest']; // groups that get arm finishers (biceps on back, triceps on chest)
-const APP_VERSION = '6.0';
+const APP_VERSION = '7.0';
 const SEED_PLAN_VERSION = 1; // plan.json v1 == built-in defaults
 const PHASE_DAYS = 28;
 const PHASES = {
@@ -134,6 +134,14 @@ function syncAll(d){
   }
 }
 const emptyPeds = () => ({compounds: [], doses: [], labs: []});
+const emptyLabs = () => ({source: null, connectedAt: null, lastSync: null, results: [], reports: {}});
+function normLabs(l){
+  l = Object.assign(emptyLabs(), l && typeof l === 'object' && !Array.isArray(l) ? l : {});
+  if (!Array.isArray(l.results)) l.results = [];
+  if (!l.reports || typeof l.reports !== 'object') l.reports = {};
+  for (const k of ['source', 'connectedAt', 'lastSync']) if (!(k in l)) l[k] = null;
+  return l;
+}
 const emptyFood = () => ({entries: [], favorites: [], targets: {kcal: null, p: null, c: null, f: null}, targetsSource: 'coach'});
 function normPeds(p){
   p = p && typeof p === 'object' ? p : {};
@@ -154,7 +162,7 @@ function stripArms(plan, d){
   return plan;
 }
 function freshDb(){
-  const d = {version: 6, exercises: {}, plans: {}, phase: null, coach: {planVersion: SEED_PLAN_VERSION, banner: null}, sessions: [], body: [], profile: {height: null}, peds: emptyPeds(), food: emptyFood()};
+  const d = {version: 7, exercises: {}, plans: {}, phase: null, coach: {planVersion: SEED_PLAN_VERSION, banner: null}, sessions: [], body: [], profile: {height: null}, peds: emptyPeds(), food: emptyFood(), labs: emptyLabs()};
   for (const g of GROUPS) d.exercises[g.id] = [];
   for (const ph of Object.keys(PHASES)) { d.plans[ph] = {}; for (const g of ['arms', ...GROUPS.map(x => x.id).filter(x => x !== 'arms')]) d.plans[ph][g] = buildPlan(ph, g, d.exercises); }
   return d;
@@ -198,6 +206,12 @@ function migrate(d){
   }
   d.peds = normPeds(d.peds);
   d.food = normFood(d.food);
+  if (d.version < 7) {
+    // v7: imported MyChart lab results (additive only; peds.labs manual notes stay as they are)
+    d.labs = normLabs(d.labs);
+    d.version = 7;
+  }
+  d.labs = normLabs(d.labs);
   for (const ph of Object.keys(PHASES)) { d.plans[ph] = d.plans[ph] || {}; for (const g of GROUPS) if (!d.plans[ph][g.id]) d.plans[ph][g.id] = buildPlan(ph, g.id, d.exercises); }
   syncAll(d);
   return d;
@@ -208,7 +222,7 @@ function load(){
     if (raw) {
       const d = JSON.parse(raw);
       if (d && d.exercises && Array.isArray(d.sessions)) {
-        if (!d.version || d.version < 6) localStorage.setItem(STORE_KEY + '.backup-v' + (d.version || 1), raw); // safety copy before upgrading
+        if (!d.version || d.version < 7) localStorage.setItem(STORE_KEY + '.backup-v' + (d.version || 1), raw); // safety copy before upgrading
         return migrate(d);
       }
     }
@@ -319,7 +333,7 @@ function render(){
   const v = cur(), el = $('#view');
   el.className = 'fade-in'; void el.offsetWidth;
   ({phase: renderPhase, home: renderHome, focus: renderFocus, group: renderGroup, log: renderLog, journal: renderJournal, session: renderSession,
-    progress: renderProgress, track: renderTrack, settings: renderSettings})[v.v](el, v);
+    progress: renderProgress, track: renderTrack, marker: renderMarker, settings: renderSettings})[v.v](el, v);
 }
 
 /* ---------- Workout: Home ---------- */
@@ -881,7 +895,7 @@ function renderSettings(el){
   $('#wipe').onclick = () => {
     if (!confirm('Erase ALL workouts and exercises? This cannot be undone.')) return;
     if (!confirm('Really erase everything? Export a backup first if unsure.')) return;
-    db = freshDb(); save(); stacks.workout = [{v:'phase'}]; switchTab('workout'); toast('All data erased');
+    db = freshDb(); if (window.MyChart) MyChart.disconnect(); save(); stacks.workout = [{v:'phase'}]; switchTab('workout'); toast('All data erased');
   };
 }
 function exportPayload(){
@@ -910,7 +924,8 @@ function importData(ev){
       if (!confirm(`Replace current data with backup (${d.sessions.length} workouts)?`)) return;
       db = migrate({version: d.version || 1, exercises: d.exercises, plans: d.plans, phase: d.phase === undefined ? db.phase : d.phase, coach: d.coach || db.coach, sessions: d.sessions,
         body: Array.isArray(d.body) ? d.body : db.body, profile: d.profile || db.profile,
-        peds: d.peds && typeof d.peds === 'object' ? d.peds : db.peds, food: d.food && typeof d.food === 'object' ? d.food : db.food});
+        peds: d.peds && typeof d.peds === 'object' ? d.peds : db.peds, food: d.food && typeof d.food === 'object' ? d.food : db.food,
+        labs: d.labs && typeof d.labs === 'object' && !Array.isArray(d.labs) ? d.labs : db.labs});
       save(); render(); toast('Backup restored');
     } catch (e) { toast('That file is not a Lift Log backup'); }
     ev.target.value = '';
@@ -1099,12 +1114,12 @@ function weightChart(pts){
 }
 
 /* ---------- Track hub: Body · Food · Protocol ---------- */
-const TRACK_MODES = [['body', '⚖️', 'Body'], ['food', '🍽️', 'Food'], ['protocol', '💉', 'Protocol']];
+const TRACK_MODES = [['body', '⚖️', 'Body'], ['food', '🍽️', 'Food'], ['protocol', '💉', 'Protocol'], ['labs', '🩸', 'Labs']];
 let trackMode = localStorage.getItem('liftlog.trackMode') || 'body';
 if (!TRACK_MODES.some(m => m[0] === trackMode)) trackMode = 'body';
 function openTrack(mode){ trackMode = mode; localStorage.setItem('liftlog.trackMode', mode); stacks.track = [{v:'track'}]; switchTab('track'); }
 function renderTrack(el){
-  ({body: renderBody, food: renderFood, protocol: renderProtocol})[trackMode](el);
+  ({body: renderBody, food: renderFood, protocol: renderProtocol, labs: renderLabs})[trackMode](el);
   el.insertAdjacentHTML('afterbegin', `<div class="seg track-seg" id="trackSeg">${TRACK_MODES.map(([k, i, l]) => `<button data-m="${k}" class="${trackMode === k ? 'on' : ''}">${i} ${l}</button>`).join('')}</div>`);
   el.querySelectorAll('#trackSeg button').forEach(b => b.onclick = () => { trackMode = b.dataset.m; localStorage.setItem('liftlog.trackMode', trackMode); render(); window.scrollTo(0, 0); });
 }
@@ -1313,7 +1328,7 @@ function renderProtocol(el){
     <div class="section-title">Recent doses</div>
     ${P.doses.length ? `<div class="list">${[...P.doses].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 30).map(d => `<button class="row dose-row" data-dose="${esc(d.id)}"><div class="main"><div class="name">${esc(d.name)}</div>
       <div class="meta">${fmtDay(d.at.slice(0, 10))} · ${fmtTime(d.at)}${d.site ? ' · ' + esc(d.site) : ''}${d.note ? ' · ' + esc(d.note) : ''}</div></div><div class="kc">${fmtNum(d.mg)}<small> mg</small>${d.ml ? `<div class="mlv">${fmtNum(d.ml)} mL</div>` : ''}</div></button>`).join('')}</div>` : `<p class="note">No doses logged yet.</p>`}
-    <div class="section-title">Health notes</div>
+    <div class="section-title">Health notes${db.labs.results.length ? ` <button class="st-link" id="toLabs">MyChart labs (${db.labs.results.length}) ›</button>` : ''}</div>
     ${P.labs.length ? `<div class="list">${[...P.labs].sort((a, b) => b.date.localeCompare(a.date)).map(l => `<button class="row lab-row" data-lab="${esc(l.id)}"><div class="main"><div class="name">${l.kind === 'bloodwork' ? '🩸 Bloodwork' : l.kind === 'side-effect' ? '⚠️ Side effect' : '📝 Note'} <span class="pill">${fmtDay(l.date)}</span></div>
       <div class="meta lab-text">${esc(l.text)}</div></div></button>`).join('')}</div>` : `<p class="note">Bloodwork markers, side effects or anything else worth tracking.</p>`}
     <p class="note">Personal record-keeping only. Planned amounts are what you entered.</p>`;
@@ -1321,6 +1336,7 @@ function renderProtocol(el){
   $('#logDose').onclick = () => doseSheet(null, (today[0] || upcoming[0] || {c: P.compounds[0]}).c.id);
   $('#addCompound').onclick = () => compoundSheet(null);
   $('#addLab').onclick = () => labSheet(null);
+  if ($('#toLabs')) $('#toLabs').onclick = () => openTrack('labs');
   el.querySelectorAll('[data-comp]').forEach(b => b.onclick = () => compoundSheet(P.compounds.find(c => c.id === b.dataset.comp)));
   el.querySelectorAll('[data-dose]').forEach(b => b.onclick = () => doseSheet(P.doses.find(d => d.id === b.dataset.dose)));
   el.querySelectorAll('[data-lab]').forEach(b => b.onclick = () => labSheet(P.labs.find(l => l.id === b.dataset.lab)));
@@ -1670,6 +1686,213 @@ function bindCoachSettings(){
   $('#planCheck').onclick = () => Coach.check(true);
 }
 
+
+/* ---------- Labs: MyChart (Epic SMART on FHIR) import ---------- */
+const MC = () => window.MyChart || null;
+/** well-known markers: canonical id, LOINC codes, name fallback (first match wins, so order matters) */
+const MARKERS = [
+  {id: 'free-t', name: 'Free testosterone', codes: ['2991-8', '49041-7', '2990-0'], re: /free\s+testosterone|testosterone[, ]+free/i},
+  {id: 'testosterone', name: 'Testosterone, total', codes: ['2986-8', '49541-6', '14913-8'], re: /testosterone(?!.*(free|bioavail))/i},
+  {id: 'estradiol', name: 'Estradiol', codes: ['2243-4', '14715-7', '35383-9', '83112-3'], re: /estradiol/i},
+  {id: 'shbg', name: 'SHBG', codes: ['13967-5'], re: /sex hormone binding|\bshbg\b/i},
+  {id: 'lh', name: 'LH', codes: ['10501-5'], re: /luteinizing|^lh\b/i},
+  {id: 'fsh', name: 'FSH', codes: ['15067-2'], re: /follicle stim|^fsh\b/i},
+  {id: 'prolactin', name: 'Prolactin', codes: ['2842-3'], re: /prolactin/i},
+  {id: 'hct', name: 'Hematocrit', codes: ['4544-3', '20570-8', '71833-8'], re: /hematocrit|^hct\b/i},
+  {id: 'hgb', name: 'Hemoglobin', codes: ['718-7', '20509-6'], re: /^(hemoglobin|hgb)\b(?!.*a1c)/i},
+  {id: 'rbc', name: 'RBC', codes: ['789-8'], re: /^(rbc|red blood cell)/i},
+  {id: 'ldl', name: 'LDL cholesterol', codes: ['13457-7', '18262-6', '2089-1'], re: /\bldl\b/i},
+  {id: 'hdl', name: 'HDL cholesterol', codes: ['2085-9'], re: /\bhdl\b/i},
+  {id: 'tg', name: 'Triglycerides', codes: ['2571-8'], re: /triglycer/i},
+  {id: 'chol', name: 'Total cholesterol', codes: ['2093-3'], re: /^cholesterol(,?\s*total)?$|total cholesterol/i},
+  {id: 'alt', name: 'ALT', codes: ['1742-6', '1743-4', '76625-3'], re: /\balt\b|alanine amino/i},
+  {id: 'ast', name: 'AST', codes: ['1920-8', '30239-8'], re: /\bast\b|aspartate amino/i},
+  {id: 'psa', name: 'PSA', codes: ['2857-1', '35741-8', '10886-0'], re: /\bpsa\b|prostate specific/i},
+  {id: 'creat', name: 'Creatinine', codes: ['2160-0', '38483-4'], re: /^creatinine(?!.*(clear|urine|ratio))/i},
+  {id: 'egfr', name: 'eGFR', codes: ['33914-3', '48642-3', '62238-1', '98979-8', '88293-6'], re: /egfr|glomerular/i},
+  {id: 'a1c', name: 'Hemoglobin A1c', codes: ['4548-4', '17856-6'], re: /a1c/i},
+  {id: 'glucose', name: 'Glucose', codes: ['2345-7', '2339-0'], re: /^glucose/i}
+];
+const KEY_MARKERS = ['testosterone', 'free-t', 'estradiol', 'hct', 'hgb', 'ldl', 'hdl', 'tg', 'chol', 'alt', 'ast', 'psa'];
+function markerKey(r){
+  const m = MARKERS.find(x => r.code && x.codes.includes(r.code)) || MARKERS.find(x => x.re.test(r.name || ''));
+  return m ? m.id : r.code ? 'loinc:' + r.code : 'name:' + String(r.name || '').toLowerCase();
+}
+function markerName(key){
+  const m = MARKERS.find(x => x.id === key); if (m) return m.name;
+  const r = db.labs.results.find(x => markerKey(x) === key); return r ? r.name : key;
+}
+/** numeric series for a marker, oldest first (one point per date: last value of that day) */
+function markerSeries(key){
+  const byDate = new Map();
+  for (const r of db.labs.results) if (markerKey(r) === key) byDate.set(r.date, r);
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+const flagPill = f => !f ? '' : `<span class="flag flag-${f === 'L' || f === 'LL' ? 'lo' : f === 'A' ? 'ab' : 'hi'}">${f}</span>`;
+const refStr = r => r.refLow != null && r.refHigh != null ? `${fmtLab(r.refLow)}–${fmtLab(r.refHigh)}` : r.refHigh != null ? `≤ ${fmtLab(r.refHigh)}` : r.refLow != null ? `≥ ${fmtLab(r.refLow)}` : (r.refText || '');
+const fmtLab = n => n == null ? '' : Math.abs(n) >= 100 ? Math.round(n).toLocaleString() : String(Math.round(n * 100) / 100);
+const valStr = r => r.text && (r.value == null || /^[<>]/.test(r.text)) ? esc(r.text.split(' · ')[0]) : fmtLab(r.value);
+
+let labsBusy = false;
+function labsState(){
+  const mc = MC();
+  if (!mc) return {st: 'unavailable'};
+  const ep = mc.endpoint((mc.conn || {}).endpointId) || mc.endpoint(mc.config().defaultEndpoint) || mc.endpoints()[0];
+  const configured = mc.endpoints().filter(e => mc.configured(e));
+  return {st: mc.status(), conn: mc.conn, ep, configured};
+}
+async function syncLabs(manual){
+  const mc = MC(); if (!mc || labsBusy) return false;
+  if (mc.status() !== 'connected' && !(await mc.ensureToken())) {
+    if (manual) { if (confirm('Your MyChart session has expired (Epic sign-ins last about an hour). Sign in again to import new results?')) reconnectLabs(); }
+    if (trackMode === 'labs') render();
+    return false;
+  }
+  if (!navigator.onLine) { if (manual) toast('Offline · try again when online'); return false; }
+  labsBusy = true; if (tab === 'track' && trackMode === 'labs') render();
+  try {
+    const {observations, reports} = await mc.fetchLabs();
+    const P = mc.parse, {reportOf, info} = P.indexReports(reports);
+    const parsed = observations.flatMap(o => P.parseObservation(o, reportOf));
+    const m = P.mergeResults(db.labs.results, parsed);
+    const c = mc.conn;
+    db.labs.results = m.results;
+    db.labs.reports = Object.assign(db.labs.reports || {}, info);
+    db.labs.source = {system: 'epic-mychart', name: c.name, endpointId: c.endpointId, env: c.env, fhirBase: c.fhirBase};
+    if (!db.labs.connectedAt) db.labs.connectedAt = c.connectedAt || new Date().toISOString();
+    db.labs.lastSync = new Date().toISOString();
+    mc.setConn({...mc.conn, lastError: ''});
+    save();
+    if (manual || m.added) toast(m.added ? `✓ ${m.added} new lab result${m.added > 1 ? 's' : ''}` : '✓ Labs up to date');
+    return true;
+  } catch (e) {
+    const expired = e && e.code === 'expired';
+    if (mc.conn) mc.setConn({...mc.conn, lastError: expired ? '' : (e && e.status === 403 ? 'MyChart refused the request (403). The app may be missing an API on its Epic registration.' : 'Could not reach MyChart. Try again later.')});
+    if (manual) toast(expired ? 'MyChart session expired' : 'Lab sync failed');
+    return false;
+  } finally {
+    labsBusy = false;
+    if (tab === 'track' && trackMode === 'labs') render();
+  }
+}
+async function connectLabs(endpointId){
+  const mc = MC(); if (!mc) return;
+  if (!navigator.onLine) { toast('Connect needs internet'); return; }
+  try { await mc.connect(endpointId); }
+  catch (e) { toast(e.message === 'not-configured' ? 'MyChart is not set up yet (client ID missing)' : 'Could not reach MyChart'); }
+}
+function reconnectLabs(){ const s = labsState(); connectLabs(s.conn ? s.conn.endpointId : (s.ep || {}).id); }
+function maybeAutoSyncLabs(){
+  const mc = MC(); if (!mc || mc.status() !== 'connected' || !navigator.onLine) return;
+  const hrs = mc.config().autoSyncHours || 6, last = db.labs.lastSync ? new Date(db.labs.lastSync).getTime() : 0;
+  if (Date.now() - last > hrs * 3600e3) syncLabs(false);
+}
+function labsConnHtml(){
+  const s = labsState(), L = db.labs;
+  if (s.st === 'unavailable') return `<div class="card muted-card">MyChart connection is unavailable offline.</div>`;
+  const last = L.lastSync ? `Last import ${timeAgo(L.lastSync)}` : 'Not imported yet';
+  const err = s.conn && s.conn.lastError ? `<div class="lab-err">${esc(s.conn.lastError)}</div>` : '';
+  if (s.st === 'connected') {
+    const mins = Math.max(1, Math.round((s.conn.expiresAt - Date.now()) / 60000));
+    return `<div class="card mc-card ok"><div class="mc-head"><span class="mc-dot ok"></span><div class="grow"><b>MyChart · ${esc(s.conn.name)}</b>
+      <div class="sub">${s.conn.patientName ? esc(s.conn.patientName) + ' · ' : ''}${last}${s.conn.refreshToken ? '' : ` · session ${mins} min left`}</div></div></div>${err}
+      <div class="btn-row"><button class="btn primary" id="labSync" ${labsBusy ? 'disabled' : ''}>${labsBusy ? 'Syncing…' : '⟳ Sync labs now'}</button></div>
+      <div class="btn-row"><button class="btn small danger" id="labOff">Disconnect</button></div></div>`;
+  }
+  if (s.st === 'expired') return `<div class="card mc-card warn"><div class="mc-head"><span class="mc-dot warn"></span><div class="grow"><b>MyChart session expired</b>
+      <div class="sub">${esc(s.conn.name)} · ${last}. Epic sign-ins last about an hour, so sign in again to import new results.</div></div></div>${err}
+      <div class="btn-row"><button class="btn primary" id="labReconnect">Reconnect &amp; sync</button></div>
+      <div class="btn-row"><button class="btn small danger" id="labOff">Disconnect</button></div></div>`;
+  // not connected
+  if (!s.configured.length) return `<div class="card mc-card"><div class="mc-head"><span class="mc-dot"></span><div class="grow"><b>Connect MyChart</b>
+      <div class="sub">Import lab results from ${esc((s.ep || {}).name || 'MyChart')} automatically.</div></div></div>
+      <div class="lab-err">Not set up yet: the app's Epic client ID still needs to be added (see EPIC_REGISTRATION.md).</div>
+      <div class="btn-row"><button class="btn primary" id="labConnect" disabled>Connect MyChart</button></div></div>`;
+  return `<div class="card mc-card"><div class="mc-head"><span class="mc-dot"></span><div class="grow"><b>Connect MyChart</b>
+      <div class="sub">Sign in to MyChart to import your lab results (read-only). Tokens stay on this phone.</div></div></div>
+      ${s.configured.length > 1 ? `<select class="select" id="labEp">${s.configured.map(e => `<option value="${esc(e.id)}" ${s.ep && e.id === s.ep.id ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</select>` : `<div class="sub" style="margin:8px 0 0">Health system: <b>${esc(s.configured[0].name)}</b></div>`}
+      ${err}<div class="btn-row"><button class="btn primary" id="labConnect">Connect MyChart</button></div></div>`;
+}
+function renderLabs(el){
+  setHeader('Labs', 'Bloodwork');
+  const L = db.labs, rs = L.results;
+  const byKey = new Map();
+  for (const r of rs) { const k = markerKey(r); if (!byKey.has(k)) byKey.set(k, []); byKey.get(k).push(r); }
+  const keys = KEY_MARKERS.filter(k => byKey.has(k) && byKey.get(k).some(r => r.value != null));
+  const tiles = keys.map(k => {
+    const ser = markerSeries(k).filter(r => r.value != null), last = ser[ser.length - 1], prev = ser[ser.length - 2];
+    const d = prev ? last.value - prev.value : null;
+    return `<button class="lab-tile" data-marker="${esc(k)}"><div class="lt-name">${esc(markerName(k))}</div>
+      <div class="lt-val">${valStr(last)} <small>${esc(last.unit)}</small> ${flagPill(last.flag)}</div>
+      <div class="lt-sub">${fmtDay(last.date)}${d != null && d !== 0 ? ` · <span class="lab-delta">${d > 0 ? '▲' : '▼'} ${fmtLab(Math.abs(d))}</span>` : ''}</div></button>`;
+  }).join('');
+  const dates = [...new Set(rs.map(r => r.date))].sort().reverse();
+  const draws = dates.map(date => {
+    const panelOf = r => r.reportId && L.reports[r.reportId] ? L.reports[r.reportId].name : '\uffff';
+    const items = rs.filter(r => r.date === date).sort((a, b) => panelOf(a).localeCompare(panelOf(b)) || String(a.name).localeCompare(String(b.name)));
+    const panels = [...new Set(items.map(r => r.reportId && L.reports[r.reportId] ? L.reports[r.reportId].name : null).filter(Boolean))];
+    const flagged = items.filter(r => r.flag).length;
+    return `<div class="section-title draw-title">${fmtDay(date, true)} ${flagged ? `<span class="st-sub">${flagged} flagged</span>` : ''}${panels.length ? `<div class="draw-panels">${panels.map(esc).join(' · ')}</div>` : ''}</div>
+      <div class="list">${items.map(r => `<button class="row lab-res" data-marker="${esc(markerKey(r))}"><div class="main"><div class="name">${esc(r.name)}</div>
+        <div class="meta">${refStr(r) ? 'ref ' + esc(refStr(r)) : 'no range'}${r.status ? ' · ' + esc(r.status) : ''}</div></div>
+        <div class="lab-v ${r.flag ? 'flagged' : ''}">${valStr(r)}<small> ${esc(r.unit)}</small> ${flagPill(r.flag)}</div></button>`).join('')}</div>`;
+  }).join('');
+  el.innerHTML = `${labsConnHtml()}
+    ${keys.length ? `<div class="section-title">Key markers</div><div class="lab-tiles">${tiles}</div>` : ''}
+    ${rs.length ? draws : `<p class="note">No lab results yet. Once MyChart is connected, results import here grouped by draw date, with H/L flags and a trend chart for each marker.</p>`}
+    <p class="note">Imported from MyChart (read-only) · ${rs.length} results. Manual bloodwork notes stay in Protocol › Health notes. Not medical advice.</p>`;
+  if ($('#labConnect')) $('#labConnect').onclick = () => connectLabs($('#labEp') ? $('#labEp').value : (labsState().configured[0] || {}).id);
+  if ($('#labReconnect')) $('#labReconnect').onclick = reconnectLabs;
+  if ($('#labSync')) $('#labSync').onclick = () => syncLabs(true);
+  if ($('#labOff')) $('#labOff').onclick = () => {
+    if (!confirm('Disconnect MyChart? This deletes the sign-in from this phone. Imported results stay.')) return;
+    const delAll = rs.length && confirm(`Also delete the ${rs.length} imported lab results from Lift Log?`);
+    MC().disconnect(); db.labs.connectedAt = null;
+    if (delAll) { db.labs.results = []; db.labs.reports = {}; db.labs.lastSync = null; db.labs.source = null; }
+    save(); render(); toast('MyChart disconnected');
+  };
+  el.querySelectorAll('[data-marker]').forEach(b => b.onclick = () => push({v: 'marker', key: b.dataset.marker}));
+}
+function renderMarker(el, v){
+  const ser = markerSeries(v.key), num = ser.filter(r => r.value != null), last = ser[ser.length - 1];
+  setHeader(markerName(v.key), 'Lab trend');
+  if (!last) { el.innerHTML = `<p class="note">No results for this marker.</p>`; return; }
+  const unit = last.unit, lo = [...ser].reverse().find(r => r.refLow != null), hi = [...ser].reverse().find(r => r.refHigh != null);
+  el.innerHTML = `<div class="card lab-hero"><div class="lt-name">Latest · ${fmtDay(last.date, true)}</div>
+      <div class="lh-val">${valStr(last)} <small>${esc(unit)}</small> ${flagPill(last.flag)}</div>
+      <div class="sub">${refStr(last) ? 'Reference ' + esc(refStr(last)) + ' ' + esc(unit) : 'No reference range'} · ${num.length} result${num.length === 1 ? '' : 's'}</div></div>
+    ${num.length ? `<div class="card chart-card">${labChart(num, lo ? lo.refLow : null, hi ? hi.refHigh : null)}</div>` : ''}
+    <div class="section-title">History</div>
+    <div class="list">${[...ser].reverse().map(r => `<div class="row"><div class="main"><div class="name">${fmtDay(r.date, true)}</div>
+      <div class="meta">${esc(r.name)}${refStr(r) ? ' · ref ' + esc(refStr(r)) : ''}${r.reportId && db.labs.reports[r.reportId] ? ' · ' + esc(db.labs.reports[r.reportId].name) : ''}</div></div>
+      <div class="lab-v ${r.flag ? 'flagged' : ''}">${valStr(r)}<small> ${esc(r.unit)}</small> ${flagPill(r.flag)}</div></div>`).join('')}</div>`;
+}
+/** trend chart with shaded reference band */
+function labChart(pts, refLow, refHigh){
+  const W = 360, H = 200, L = 44, R = 12, T = 14, B = 26, color = '#ff4d8d';
+  const ys = pts.map(p => p.value).concat([refLow, refHigh].filter(x => x != null));
+  let lo = Math.min(...ys), hi = Math.max(...ys);
+  if (lo === hi) { lo -= Math.abs(lo) * .1 || 1; hi += Math.abs(hi) * .1 || 1; }
+  const span = hi - lo; lo -= span * .12; hi += span * .12; if (Math.min(...ys) >= 0) lo = Math.max(0, lo);
+  const step = niceStep((hi - lo) / 4); lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
+  const t0 = parseDate(pts[0].date).getTime(), t1 = parseDate(pts[pts.length - 1].date).getTime();
+  const xOf = p => pts.length === 1 || t1 === t0 ? (L + W - R) / 2 : L + (W - L - R) * (parseDate(p.date).getTime() - t0) / (t1 - t0);
+  const yOf = y => T + (H - T - B) * (1 - (y - lo) / (hi - lo));
+  let grid = '';
+  for (let v = lo; v <= hi + 1e-9; v += step) { const y = yOf(v); grid += `<line x1="${L}" x2="${W - R}" y1="${y}" y2="${y}" stroke="#262c38"/><text x="${L - 6}" y="${y + 4}" text-anchor="end" fill="#6b7385" font-size="10.5">${fmtLab(Math.round(v * 1000) / 1000)}</text>`; }
+  const bandTop = yOf(refHigh != null ? Math.min(refHigh, hi) : hi), bandBot = yOf(refLow != null ? Math.max(refLow, lo) : lo);
+  const band = refLow != null || refHigh != null ? `<rect class="ref-band" x="${L}" width="${W - L - R}" y="${bandTop.toFixed(1)}" height="${Math.max(0, bandBot - bandTop).toFixed(1)}" fill="#3ddc97" fill-opacity=".09"/>
+    ${refHigh != null ? `<line x1="${L}" x2="${W - R}" y1="${yOf(refHigh)}" y2="${yOf(refHigh)}" stroke="#3ddc97" stroke-opacity=".5" stroke-dasharray="4 4"/>` : ''}
+    ${refLow != null ? `<line x1="${L}" x2="${W - R}" y1="${yOf(refLow)}" y2="${yOf(refLow)}" stroke="#3ddc97" stroke-opacity=".5" stroke-dasharray="4 4"/>` : ''}` : '';
+  const line = pts.map((p, i) => (i ? 'L' : 'M') + xOf(p).toFixed(1) + ' ' + yOf(p.value).toFixed(1)).join(' ');
+  const short = s => { const t = parseDate(s); return t.toLocaleDateString(undefined, {month: 'short', day: 'numeric'}) + " '" + String(t.getFullYear()).slice(2); };
+  const lbl = pts.length === 1 ? `<text x="${xOf(pts[0])}" y="${H - 6}" text-anchor="middle" fill="#6b7385" font-size="10.5">${short(pts[0].date)}</text>`
+    : `<text x="${L}" y="${H - 6}" fill="#6b7385" font-size="10.5">${short(pts[0].date)}</text><text x="${W - R}" y="${H - 6}" text-anchor="end" fill="#6b7385" font-size="10.5">${short(pts[pts.length - 1].date)}</text>`;
+  return `<svg class="chart lab-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Lab trend chart">${grid}${band}
+    ${pts.length > 1 ? `<path d="${line}" fill="none" stroke="${color}" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>` : ''}
+    ${pts.map(p => `<circle class="pt" cx="${xOf(p).toFixed(1)}" cy="${yOf(p.value).toFixed(1)}" r="4" fill="${p.flag ? '#ff4d5e' : color}" stroke="#151922" stroke-width="1.5"/>`).join('')}${lbl}</svg>`;
+}
+
 /* ---------- Boot ---------- */
 function checkPhase(){
   if (needsPhase() && stacks.workout[0].v !== 'phase') {
@@ -1680,11 +1903,20 @@ function checkPhase(){
   return false;
 }
 if (needsPhase()) stacks.workout = [{v:'phase'}];
+// returning from MyChart (callback.html) → open Labs and import
+const mcParam = new URLSearchParams(location.search).get('mychart');
+if (mcParam) {
+  history.replaceState(null, '', location.pathname);
+  trackMode = 'labs'; localStorage.setItem('liftlog.trackMode', 'labs'); tab = 'track';
+  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === 'track'));
+  if (mcParam === 'connected' && MC() && MC().conn) { db.labs.connectedAt = MC().conn.connectedAt; save(); setTimeout(() => syncLabs(true), 0); }
+}
 render();
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { checkPhase(); Sync.retryPending(); Coach.check(); } });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { checkPhase(); Sync.retryPending(); Coach.check(); maybeAutoSyncLabs(); } });
 window.addEventListener('online', () => { Sync.retryPending(); Coach.check(); });
 Sync.retryPending();
 Coach.check();
+if (!mcParam) maybeAutoSyncLabs();
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   // When a new version's service worker takes over, reload once so the new code runs.
   const hadController = !!navigator.serviceWorker.controller;

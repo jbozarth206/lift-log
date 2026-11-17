@@ -1,5 +1,5 @@
-const CACHE = 'liftlog-v6';
-const ASSETS = ['./', './index.html', './styles.css', './app.js', './styles.css?v=6', './app.js?v=6', './manifest.webmanifest',
+const CACHE = 'liftlog-v7';
+const ASSETS = ['./', './index.html', './styles.css', './app.js', './styles.css?v=7', './app.js?v=7', './mychart.js', './mychart.config.js', './mychart.js?v=7', './mychart.config.js?v=7', './manifest.webmanifest',
   './icons/apple-touch-icon.png', './icons/icon-192.png', './icons/icon-512.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS.map(u => new Request(u, {cache: 'reload'})))).then(() => self.skipWaiting()));
@@ -12,6 +12,8 @@ self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
   // coach plan: always from the network, never cached (the app ignores it when offline)
+  // OAuth redirect page: never serve a cached copy
+  if (new URL(req.url).pathname.endsWith('/callback.html')) { e.respondWith(fetch(req, {cache: 'no-store'})); return; }
   if (new URL(req.url).pathname.endsWith('/plan.json')) { e.respondWith(fetch(req, {cache: 'no-store'})); return; }
   // tidy any caches an older worker re-created after we activated
   if (req.mode === 'navigate') caches.keys().then(keys => keys.filter(k => k !== CACHE).forEach(k => caches.delete(k)));
