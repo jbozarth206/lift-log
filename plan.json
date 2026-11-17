@@ -1,8 +1,9 @@
 {
   "schema": 1,
-  "version": 2,
-  "updatedAt": "2026-11-11T21:05:00Z",
-  "message": "Coach here. Bulk block is on. I rebuilt your Shoulders · All day off today's session.\n- Overhead press is the anchor: hit 115×8, then move to 120.\n- Front raises are out. Your pressing already hammers front delts, so those sets go to side delts.\n- Lateral raises move to the end as FST-7: 7 sets, 30-35s rest, chase the pump. Side delts build the width.\n- Log working sets only, not warm-ups, so your numbers stay honest.",
+  "version": 3,
+  "updatedAt": "2026-11-17T03:05:38Z",
+  "message": "Coach: Nutrition targets are live. Bulk: 4,000 kcal, 250g protein, 500g carbs, 110g fat. Log your food daily and weigh in most mornings (after the bathroom, before eating). Aim to gain 0.25-0.5 lb a week; I'll adjust calories after a week of data. Shoulder plan from v2 stays the same. Arm finishers and Arms day use the app defaults for now. Log working sets only.",
+  "nutrition": {"bulk": {"kcal": 4000, "p": 250, "c": 500, "f": 110}, "cut": {"kcal": 3200, "p": 275, "c": 320, "f": 90}},
   "phases": {
     "bulk": {
       "back": {
