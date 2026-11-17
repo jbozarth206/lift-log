@@ -22,9 +22,9 @@ gh api 'repos/jbozarth206/lift-log-data/commits?path=data/liftlog.json&per_page=
 ### Data format (same as the app's backup export)
 ```jsonc
 {
-  "app": "liftlog", "appVersion": "7.1",
+  "app": "liftlog", "appVersion": "7.2",
   "exportedAt": "2026-11-11T18:40:00.000Z",      // when the phone pushed it
-  "version": 8,                                   // data schema version
+  "version": 9,                                   // data schema version
   "phase": {"id": "bulk", "start": "2026-11-11"}, // current 4-week block (bulk|cut), null if not chosen yet
   "exercises": { "back": [{"id": "mhx2k1abcde", "name": "Lat Pulldown"}], "chest": [], "legs": [], "shoulders": [], "arms": [] },
   "plans": { "bulk": { "back": { "upper": [{"exId": "mhx2k1abcde", "sets": 4, "min": 6, "max": 8, "rest": 150, "notes": "…"}], "mid": [], "lower": [], "all": [] } }, "cut": {} },
@@ -36,13 +36,15 @@ gh api 'repos/jbozarth206/lift-log-data/commits?path=data/liftlog.json&per_page=
   ],
   "sessions": [
     {"id": "…", "date": "2026-11-11", "group": "back", "focus": "upper", "phase": "bulk",
-     "entries": [{"exId": "mhx2k1abcde", "name": "Lat Pulldown", "sets": [{"w": 135, "r": 12}, {"w": 140, "r": 10}]}]}
+     "entries": [{"exId": "mhx2k1abcde", "name": "Lat Pulldown", "sets": [{"w": 135, "r": 12}, {"w": 140, "r": 10}],
+                  "target": {"src": "coach", "sets": [{"w": 135, "r": 12}, {"w": 140, "r": 10}]}}]}   // target: v7.2+, optional
   ]
 }
 ```
 - Weights are in **lb**. `w` = weight and `r` = reps for one working set.
 - `focus` / `phase` are `null` on workouts logged before those features existed. Treat them as unlabeled, not as errors.
 - `focus: "all"` means he trained the whole group that day.
+- `target` on an entry (app 7.2+, optional) is the target shown when he logged it: `src` is `"coach"` (your prescription) or `"auto"` (the app's fallback), and `sets[i]` lines up with the logged `sets[i]` (`w: 0` = bodyweight). Use it to see which prescribed sets he met, beat or missed. `coach.prescriptions` in the data is just the phone's copy of what you published; read it, don't treat it as his input.
 - Use the exercise `id` (it never changes) to follow progress across renames. `name` in entries is a snapshot taken when the set was logged.
 - **Body log** (top-level `body`, added in app v5; missing or empty in older data, so treat a missing key as `[]`):
 
@@ -147,13 +149,29 @@ Tips:
 - `notes` are short cues (≤400 chars) that he sees on the logging screen.
 - Base progression on his recent top sets and estimated 1RM (Epley: `w × (1 + r/30)`).
 
+## 2b. Set prescriptions: what he should lift next time (app 7.2+)
+On the logging screen the app shows **🧠 Coach target**, your weight × reps for every set, and pre-fills the inputs with it. Last time only appears as a small "Last: …" line. If an exercise has no current prescription, he sees an **⚙️ Auto** target instead: +5 lb (upper body) or +10 lb (lower body) if he hit the top of the rep range on every set, otherwise the same weight and +1 rep. So **at every review (e.g. Mon/Wed/Fri), publish `prescriptions` for every exercise in his upcoming sessions.** Schema and validation rules are in PLAN_SCHEMA.md › "Additions in app 7.2".
+
+How to compute them from the synced history:
+1. Work out which sessions come next (his rotation and current phase from `phase` and recent `sessions`), and the exercises in each one from `plans.<phase>.<group>.<focus>` (ids are there).
+2. For each exercise, take the most recent entry (look up `exId` across all groups) and the plan's `min`–`max` rep range:
+   - Every set at or above `max` reps → add load: about +2.5–5% (normally +5 lb upper body / +10 lb lower body; +2.5–5 lb on small isolation lifts and dumbbells), reps back to `min`/`min+1`.
+   - Within the range → same weight, +1 rep on the sets that fell short (double progression).
+   - Missed `min` on 2+ sets, or 2 sessions in a row with no progress → hold, or cut ~5–10% and rebuild. Say why in `note`.
+   - On a **cut**, aim to hold load and reps rather than add. Prescribe the last top weight for the bottom of the range and accept small rep drops.
+   - Check `target` on the last entries: if he keeps missing your targets, you're progressing too fast.
+3. Give one `{weight, reps}` per set, matching the plan's `sets` count. Use `weight: 0` for bodyweight and `null` to let him pick the load. Round to loads he can actually use (2.5/5 lb plates, 5 lb dumbbell steps).
+4. Set `updated` to today's date (`YYYY-MM-DD`). After he logs the exercise on or after that date, the app treats your target as done and shows Auto until your next review. Add `phase` if a target only applies to bulk or cut.
+5. `prescriptions` **replaces** the whole stored set each time. Include every exercise you want a Coach target on, not only the changed ones. Leave the key out entirely to keep the previous set.
+6. Bump `version` (the app ignores the file otherwise), validate with `python3 tools/validate_plan.py --data liftlog.json` (it checks every key matches an exercise id), and push.
+
 ## 3. Review cadence: 3× per week
 
 Coach reviews his data **three times a week** (e.g. Mon/Wed/Fri, spaced about 2–3 days apart). Each review:
 1. Pull `data/liftlog.json`. Check `exportedAt` and the last commit date. If nothing new has synced since the last review, say so and change nothing.
 2. Look at the sessions since the last review: top sets, estimated 1RM, rep targets hit or missed, and arm finishers. Look at the body-weight 7-day average trend against the phase goal, daily food totals against targets (logged days only), the protocol log (doses logged vs planned, any health notes), and any **new lab results** in `labs.results` since the last review (compare each marker with its previous value and the lab's range, and list flagged ones). Report protocol and lab data neutrally.
-3. If adjustments are warranted, edit `plan.json` (exercises, sets/reps/rest, `notes`, `nutrition`), write a short `message` summarizing the why, bump `version`, validate, and push. Small, specific changes beat full rewrites. Leave out combos you aren't changing.
-4. If no plan change is needed, don't bump the version just to send a message. Message him through the usual channel instead.
+3. **Every review:** refresh `prescriptions` for every exercise in his upcoming sessions (section 2b), bump `version`, validate, and push. This is how he sees what to lift next.
+4. If adjustments are warranted, also edit the rest of `plan.json` (exercises, sets/reps/rest, `notes`, `nutrition`) and write a short `message` summarizing the why. Small, specific changes beat full rewrites. Leave out combos you aren't changing.
 
 ## 4. Rules
 1. **Never write to `lift-log-data`.** That includes `body`, `profile`, `peds`, `food` and `labs`: read them, never edit them. Don't edit, delete, force-push or rewrite history there. It's his only cloud copy, and the app overwrites it.

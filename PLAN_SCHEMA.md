@@ -106,3 +106,34 @@ By default, each `back` focus ends with 1–2 biceps exercises and each `chest` 
 ## Additions in app 7.1 (rest timer)
 - `rest` (per exercise, seconds) is optional. It now also sets the length of the rest countdown on the logging screen. Omit it to get the phase/type default listed above. Use `0` for exercises that should not start a timer.
 - No new top-level keys. Existing plans keep working unchanged.
+
+## Additions in app 7.2: `prescriptions` (per-exercise set targets)
+Optional top-level object with Coach's exact weight × reps for each set. The logging screen shows it as **🧠 Coach target** in place of last time, and pre-fills the inputs with it (dimmed). Last time stays visible as a small "Last: …" line. Plans without `prescriptions` work as before.
+
+```json
+"prescriptions": {
+  "mhx2k1abcde": {
+    "sets": [{"weight": 145, "reps": 8}, {"weight": 145, "reps": 8}, {"weight": 145, "reps": 7}, {"weight": 140, "reps": 8}],
+    "note": "Hit 8s on every set last time: +5 lb. Pause at the chest.",
+    "updated": "2026-11-18",
+    "phase": "bulk"
+  },
+  "Pull-Up": {"sets": [{"weight": 0, "reps": 8}, {"weight": 0, "reps": 7}, {"weight": 0, "reps": 6}], "updated": "2026-11-18"}
+}
+```
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| key | string | yes | The exercise **id** from the synced data (`exercises.<group>[].id`, any group). An exact exercise name (case-insensitive) is accepted as a fallback, e.g. for an exercise this same plan creates by name. Unknown keys are skipped. |
+| `sets` | list of 1–20 `{weight, reps}` | yes | One object per set, in order. `weight`: lb 0–2000 (`0` = bodyweight, `null` = his pick, decimals allowed). `reps`: int 1–100. The number of sets you give is the number of rows the app pre-fills. |
+| `note` | string ≤300 | no | Shown under the targets (the why / cue). |
+| `updated` | `"YYYY-MM-DD"` | strongly recommended | The day you published it. Once he has logged that exercise **on or after** this date, the target counts as done and the app falls back to Auto until you publish a new one. Without it, the target keeps showing until replaced. |
+| `phase` | `"bulk"` / `"cut"` | no | Only show this target in that phase. Omit it to show in either phase. |
+
+Rules:
+- When a plan with `prescriptions` is applied, it **replaces** the whole stored set. An exercise left out has no Coach target any more. Leave the key out entirely to keep the previous set.
+- It doesn't change `phases` targets (sets × rep range, rest), which still show in the Target row and drive the rest timer.
+- Changed targets are listed in the "Coach updated your plan" banner.
+- Fallback when an exercise has no current prescription, labelled **⚙️ Auto** (never "Coach"): if every set last time reached the top of the plan's rep range, +5 lb (upper body) / +10 lb (lower body: Legs group, or squat/deadlift/leg press/lunge/hip thrust/RDL/rack pull/good morning/calf moves) with reps at the bottom of the range; otherwise the same weight with +1 rep (capped at the top of the range). With no history either, the card shows the plan's sets × reps and nothing is pre-filled.
+- Each logged set is marked **▲ beat / ✓ met / ▼ missed** against its target. More weight and fewer reps (or the reverse) is judged by estimated 1RM. The target is saved with the entry (`entries[].target`), so the Journal shows it too.
+- `tools/validate_plan.py` checks all of this. Pass `--data liftlog.json` to confirm every key matches an exercise.

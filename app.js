@@ -9,7 +9,7 @@ const GROUPS = [
   {id:'arms', name:'Arms', color:'#ffc145', icon:'<path d="M5 18c1-5 3-8 6-10l2-3 3 1-1 4c2 1 3 3 3 5 0 2-2 4-5 4H8" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>'}
 ];
 const ARM_HOSTS = ['back', 'chest']; // groups that get arm finishers (biceps on back, triceps on chest)
-const APP_VERSION = '7.1';
+const APP_VERSION = '7.2';
 const SEED_PLAN_VERSION = 1; // plan.json v1 == built-in defaults
 const PHASE_DAYS = 28;
 const PHASES = {
@@ -175,7 +175,7 @@ function stripArms(plan, d){
   return plan;
 }
 function freshDb(){
-  const d = {version: 8, exercises: {}, plans: {}, phase: null, coach: {planVersion: SEED_PLAN_VERSION, banner: null}, sessions: [], body: [], profile: {height: null}, peds: emptyPeds(), food: emptyFood(), labs: emptyLabs(), settings: normSettings()};
+  const d = {version: 9, exercises: {}, plans: {}, phase: null, coach: {planVersion: SEED_PLAN_VERSION, banner: null}, sessions: [], body: [], profile: {height: null}, peds: emptyPeds(), food: emptyFood(), labs: emptyLabs(), settings: normSettings()};
   for (const g of GROUPS) d.exercises[g.id] = [];
   for (const ph of Object.keys(PHASES)) { d.plans[ph] = {}; for (const g of ['arms', ...GROUPS.map(x => x.id).filter(x => x !== 'arms')]) d.plans[ph][g] = buildPlan(ph, g, d.exercises); }
   return d;
@@ -231,6 +231,10 @@ function migrate(d){
     d.version = 8;
   }
   d.settings = normSettings(d.settings);
+  if (d.version < 9) {
+    // v9 (app 7.2): Coach set prescriptions arrive via plan.json (db.coach.prescriptions); no stored data changes
+    d.version = 9;
+  }
   for (const ph of Object.keys(PHASES)) { d.plans[ph] = d.plans[ph] || {}; for (const g of GROUPS) if (!d.plans[ph][g.id]) d.plans[ph][g.id] = buildPlan(ph, g.id, d.exercises); }
   syncAll(d);
   return d;
@@ -241,7 +245,7 @@ function load(){
     if (raw) {
       const d = JSON.parse(raw);
       if (d && d.exercises && Array.isArray(d.sessions)) {
-        if (!d.version || d.version < 8) localStorage.setItem(STORE_KEY + '.backup-v' + (d.version || 1), raw); // safety copy before upgrading
+        if (!d.version || d.version < 9) localStorage.setItem(STORE_KEY + '.backup-v' + (d.version || 1), raw); // safety copy before upgrading
         return migrate(d);
       }
     }
@@ -433,7 +437,7 @@ function renderGroup(el, v){
         return `<div class="row" role="button" data-id="${e.id}" style="--c:${g.color}">
           <div class="badge-num">${i + 1}</div>
           <div class="main"><div class="name">${esc(e.name)}</div>
-            <div class="meta">${e.item.notes ? '🧠 ' : ''}${e.sets} × ${repsLabel(e)} · rest ${restLabel(e.rest)}${last && !done ? ` · last ${fmtNum(Math.max(...last.sets.map(s => s.w)))} lb` : ''}</div></div>
+            <div class="meta">${e.item.notes ? '🧠 ' : ''}${e.sets} × ${repsLabel(e)} · rest ${restLabel(e.rest)}${!done ? (() => { const t = setTarget(e, g.id, tp, v.date, (getSession(v.date, g.id, v.focus, phase) || {}).id); return t.src !== 'plan' && t.sets[0] ? ` · ${t.src === 'coach' ? '🧠' : '⚙️'} ${tsetStr(t.sets[0])}` : last ? ` · last ${fmtNum(Math.max(...last.sets.map(s => s.w)))} lb` : ''; })() : ''}</div></div>
           ${v.editing
             ? `<button class="mini-btn" data-act="up" data-id="${e.id}" aria-label="Move up">↑</button><button class="mini-btn" data-act="edit" data-id="${e.id}">Edit</button>`
             : done ? `<span class="pill done">✓ Done</span>` : `<svg class="chev" width="20" height="20" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>`}
@@ -464,6 +468,54 @@ function renderGroup(el, v){
 }
 
 /* ---------- Workout: Log an exercise ---------- */
+
+/* ---------- Set targets: Coach prescription > Auto progression > Plan ---------- */
+const LOWER_RE = /squat|deadlift|leg press|lunge|hip thrust|\brdl\b|romanian|rack pull|good morning|calf|step-?up|leg extension|leg curl|hack/i;
+const isLowerBody = (name, gid) => gid === 'legs' || LOWER_RE.test(name || '');
+/** coach prescription for an exercise in a phase (null if none / other phase); stale = he already logged it on/after the day Coach published it */
+function coachRx(exId, phase, date, excludeSessionId){
+  const rx = db.coach && db.coach.prescriptions && db.coach.prescriptions[exId];
+  if (!rx || !Array.isArray(rx.sets) || !rx.sets.length) return null;
+  if (rx.phase && phase && rx.phase !== phase) return null;
+  const last = lastEntry(exId, date, excludeSessionId);
+  return {...rx, stale: !!(rx.updated && last && last.date >= rx.updated)};
+}
+/** automatic progression from the last session: all sets at the top of the range → +5 lb (upper) / +10 lb (lower), reps back to the bottom; else same weight, +1 rep */
+function autoTarget(e, last, gid){
+  if (!last || !last.sets.length) return null;
+  const inc = isLowerBody(e.name, gid) ? 10 : 5, n = Math.max(1, e.sets || last.sets.length);
+  const allTop = last.sets.every(x => x.r >= e.max);
+  const sets = Array.from({length: n}, (_, i) => {
+    const ls = last.sets[Math.min(i, last.sets.length - 1)];
+    if (!ls.w) return {w: 0, r: ls.r + 1}; // bodyweight: add a rep
+    return allTop ? {w: ls.w + inc, r: e.min} : {w: ls.w, r: Math.min(ls.r + 1, e.max)};
+  });
+  return {src: 'auto', sets, why: allTop ? `hit ${e.max}+ reps on every set last time → +${inc} lb` : `same weight, aim for +1 rep (up to ${e.max})`};
+}
+/** the target shown on the log screen: Coach > Auto > Plan */
+function setTarget(e, gid, phase, date, excludeSessionId){
+  const id = e.id || e.exId;
+  const last = lastEntry(id, date, excludeSessionId);
+  const rx = coachRx(id, phase, date, excludeSessionId);
+  if (rx && !rx.stale) return {src: 'coach', sets: rx.sets.map(x => ({w: x.weight == null ? null : x.weight, r: x.reps})), note: rx.note || '', updated: rx.updated || null};
+  const auto = autoTarget(e, last, gid);
+  if (auto) return {...auto, staleCoach: rx ? (rx.updated || true) : null};
+  return {src: 'plan', sets: [], note: ''};
+}
+/** compare a logged set with its target: 'beat' | 'met' | 'miss' | null */
+function vsTarget(w, r, t){
+  if (!t || !(r > 0)) return null;
+  const tw = t.w || 0, tr = t.r || 0;
+  if (w === tw && r === tr) return 'met';
+  if (w >= tw && r >= tr) return 'beat';
+  if (w <= tw && r <= tr) return 'miss';
+  const a = e1rm(w, r), b = e1rm(tw, tr); // mixed (more weight, fewer reps or vice versa): compare estimated 1RM
+  return Math.abs(a - b) < 0.5 ? 'met' : a > b ? 'beat' : 'miss';
+}
+const VS_LABEL = {beat: '▲ beat', met: '✓ met', miss: '▼ missed'};
+const vsChip = v => v ? `<span class="vs vs-${v}">${VS_LABEL[v]}</span>` : '';
+const tsetStr = t => t.w ? `${fmtNum(t.w)}×${t.r}` : `BW×${t.r}`;
+
 const draftCache = new Map();
 function renderLog(el, v){
   const g = groupOf(v.g);
@@ -476,15 +528,17 @@ function renderLog(el, v){
   const e = inPlan || (found ? {...fallbackItem(tphase, found.ex), name: found.ex.name} : {name: existing ? existing.name : 'Exercise', ...fallbackItem(tphase, {id: v.exId})});
   const last = lastEntry(v.exId, v.date, session ? session.id : null);
   const lastSession = last && db.sessions.find(s => s.id === last.sessionId);
+  const tgt = existing && existing.target ? {...existing.target, note: '', saved: true} : setTarget({...e, id: v.exId}, v.g, tphase, v.date, session ? session.id : null);
+  const tsets = tgt.sets;
   const dkey = [v.g, v.focus, v.exId, v.date, phase].join('|');
   if (!v.draft && draftCache.has(dkey)) v.draft = draftCache.get(dkey);
   if (!v.draft) {
     if (existing) v.draft = existing.sets.map(s => ({w: s.w || '', r: s.r || '', pre: false}));
     else {
-      const n = Math.max(1, e.sets);
+      const n = Math.max(1, tsets.length || e.sets);
       v.draft = Array.from({length: n}, (_, i) => {
-        const ls = last && (last.sets[i] || null);
-        return ls ? {w: ls.w, r: ls.r, pre: true} : {w: '', r: '', pre: false};
+        const ts = tsets[i]; // ghost values = the target (Coach or Auto)
+        return ts ? {w: ts.w == null ? '' : ts.w, r: ts.r, pre: true} : {w: '', r: '', pre: false};
       });
     }
   }
@@ -493,18 +547,22 @@ function renderLog(el, v){
   setHeader(e.name, `${phase ? PHASES[phase].short + ' · ' : ''}${g.name}${fname && fname !== 'All' ? ' · ' + fname : ''} · ${fmtDay(v.date)}`);
   const hintFor = i => last && last.sets[i] ? `last ${fmtNum(last.sets[i].w)}×${last.sets[i].r}` : '';
   const anyPre = v.draft.some(d => d.pre);
+  const rowVs = i => { const d = v.draft[i], t = tsets[i]; if (!d || !t || d.w === '' || d.r === '') return null; return vsTarget(parseFloat(d.w) || 0, parseInt(d.r) || 0, t); };
   const lastFocus = lastSession ? [lastSession.phase && PHASES[lastSession.phase] ? PHASES[lastSession.phase].short : '', focusName(lastSession.group, lastSession.focus, lastSession.focusName)].filter(Boolean).join(' · ') : '';
+  const lastLine = last ? last.sets.map(x => `${fmtNum(x.w)}×${x.r}`).join(', ') : '';
+  const tTitle = {coach: '🧠 Coach target', auto: '⚙️ Auto target', plan: '🎯 Plan target'}[tgt.src];
+  const tSub = tgt.saved ? 'when logged' : tgt.src === 'coach' ? (tgt.updated ? 'set ' + fmtDay(tgt.updated) : 'from Coach') : tgt.src === 'auto' ? 'not Coach · from last session' : `${PHASES[tphase].short} plan`;
   el.innerHTML = `
-    ${last ? `
-    <div class="last-card" style="--c:${g.color}">
-      <div class="lc-head"><span class="lc-title">Last time</span><span class="lc-date">${fmtDay(last.date, true)}${/^(Today|Yesterday)$/.test(fmtDay(last.date)) ? '' : ' · ' + daysAgo(last.date)}</span></div>
-      <div class="lc-sets">${last.sets.map((s, i) => `
-        <div class="lc-set"><div class="k">Set ${i + 1}</div><div class="w">${fmtNum(s.w)}<small> lb</small></div><div class="r">× ${s.r} reps</div></div>`).join('')}
-      </div>
-      <div class="lc-foot">Top ${fmtNum(Math.max(...last.sets.map(s => s.w)))} lb · e1RM ${fmtNum(Math.round(Math.max(...last.sets.map(s => e1rm(s.w, s.r)))))} · ${fmtNum(last.sets.reduce((a, s) => a + s.w * s.r, 0))} lb vol${lastFocus ? ' · ' + esc(lastFocus) : ''}</div>
-    </div>` : `
-    <div class="last-card first" style="--c:${g.color}"><div class="lc-head"><span class="lc-title">First time</span></div>
-      <div class="lc-first">No history for this exercise yet. Today sets your baseline 💪</div></div>`}
+    <div class="last-card tgt-card tgt-${tgt.src}" style="--c:${tgt.src === 'coach' ? '#3ddc97' : tgt.src === 'auto' ? '#ffc145' : g.color}">
+      <div class="lc-head"><span class="lc-title">${tTitle}</span><span class="lc-date">${tSub}</span></div>
+      ${tsets.length ? `<div class="lc-sets">${tsets.map((t, i) => `
+        <div class="lc-set"><div class="k">Set ${i + 1}</div><div class="w">${t.w ? fmtNum(t.w) + '<small> lb</small>' : t.w === 0 ? '<small>BW</small>' : '<small>your pick</small>'}</div><div class="r">× ${t.r} reps</div></div>`).join('')}</div>`
+        : `<div class="lc-first">${e.sets} sets × ${repsLabel(e)} reps.${last ? '' : ' No history yet. Today sets your baseline 💪'}</div>`}
+      ${tgt.note ? `<div class="tgt-note">${esc(tgt.note)}</div>` : ''}
+      ${tgt.src === 'auto' && !tgt.saved ? `<div class="tgt-note auto">Auto: ${esc(tgt.why)}${tgt.staleCoach ? ` · Coach's target${typeof tgt.staleCoach === 'string' ? ' from ' + fmtDay(tgt.staleCoach) : ''} is done; new one after his next review` : ''}</div>` : ''}
+      ${last ? `<details class="last-line"><summary>Last: <b>${lastLine}</b> · ${fmtDay(last.date)}${/^(Today|Yesterday)$/.test(fmtDay(last.date)) ? '' : ' · ' + daysAgo(last.date)}</summary>
+        <div class="lc-foot">Top ${fmtNum(Math.max(...last.sets.map(s => s.w)))} lb · e1RM ${fmtNum(Math.round(Math.max(...last.sets.map(s => e1rm(s.w, s.r)))))} · ${fmtNum(last.sets.reduce((a, s) => a + s.w * s.r, 0))} lb vol${lastFocus ? ' · ' + esc(lastFocus) : ''}</div></details>` : ''}
+    </div>
     <div class="target-row" style="--c:${PHASES[tphase].color}"><div><span class="tr-lbl">Target · ${PHASES[tphase].short}</span><b>${e.sets} sets × ${repsLabel(e)} reps</b></div><div class="rest"><span class="tr-lbl">Rest${db.settings.restOverride ? ' (yours)' : ''}</span><b>⏱ ${restLabel(restFor(e, tphase)) || 'none'}</b></div></div>
     ${e.item && e.item.notes ? `<div class="coach-note"><span class="cn-lbl">🧠 Coach note</span>${esc(e.item.notes)}</div>` : ''}
     <div class="sets-head"><div>Set</div><div style="text-align:center">Weight</div><div style="text-align:center">Reps</div><div></div></div>
@@ -513,11 +571,11 @@ function renderLog(el, v){
       <div class="set-row ${s.w !== '' ? 'filled' : ''} ${s.done ? 'done' : ''} ${hintFor(i) ? 'has-hint' : ''}" style="--c:${g.color}">
         <button class="sn" data-done="${i}" aria-label="Set ${i + 1} done">${s.done ? '✓' : i + 1}</button>
         <div class="field"><input type="number" inputmode="decimal" step="any" min="0" data-i="${i}" data-k="w" value="${s.w}" class="${s.pre ? 'prefilled' : ''}" placeholder="0"><span class="unit">lb</span>${hintFor(i) ? `<span class="hint">${hintFor(i)}</span>` : ''}</div>
-        <div class="field"><input type="number" inputmode="numeric" min="0" step="1" data-i="${i}" data-k="r" value="${s.r}" class="${s.pre ? 'prefilled' : ''}" placeholder="${e.max}"><span class="unit">reps</span></div>
+        <div class="field"><input type="number" inputmode="numeric" min="0" step="1" data-i="${i}" data-k="r" value="${s.r}" class="${s.pre ? 'prefilled' : ''}" placeholder="${tsets[i] ? tsets[i].r : e.max}"><span class="unit">reps</span><span class="vs-slot">${s.pre ? '' : vsChip(rowVs(i))}</span></div>
         <button class="del-set" data-del="${i}" aria-label="Remove set"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></button>
       </div>`).join('')}
     </div>
-    ${anyPre ? `<p class="note pre-note"><span class="pre-dot"></span>Dimmed values are prefilled from last time. Tap to change, or save as-is.</p>` : ''}
+    ${anyPre ? `<p class="note pre-note"><span class="pre-dot"></span>Dimmed values are ${tgt.src === 'coach' ? "Coach's targets" : tgt.src === 'auto' ? 'the Auto targets' : 'prefilled'}. Type what you actually did, or tap the set number if you hit it exactly.</p>` : ''}
     <div class="btn-row"><button class="btn small" id="addSet">＋ Add set</button>${anyPre ? `<button class="btn small" id="clearPre">Clear prefill</button>` : last ? `<button class="btn small" id="copyLast">Copy last</button>` : ''}</div>
     <div class="date-chip"><span>Workout date</span><input type="date" id="dateIn" value="${v.date}" max="${todayStr()}"></div>
     <div class="btn-row" style="margin-top:18px"><button class="btn primary" id="saveBtn">${existing ? 'Update' : 'Save'} ${esc(e.name)}</button></div>
@@ -529,7 +587,7 @@ function renderLog(el, v){
     const d = v.draft[i]; if (!d) return;
     d.done = true; d.pre = false;
     const row = el.querySelectorAll('.set-row')[i];
-    if (row) { row.classList.add('done', 'filled'); const sn = row.querySelector('.sn'); if (sn) sn.textContent = '✓'; row.querySelectorAll('input').forEach(x => x.classList.remove('prefilled')); }
+    if (row) { row.classList.add('done', 'filled'); const sn = row.querySelector('.sn'); if (sn) sn.textContent = '✓'; row.querySelectorAll('input').forEach(x => x.classList.remove('prefilled')); const slot = row.querySelector('.vs-slot'); if (slot) slot.innerHTML = vsChip(rowVs(i)); }
     const key = `${v.exId}|${v.date}|${i}`, st = Rest.st;
     if (st && st.key === key && !st.ended) return; // same set already timing: don't restart
     const n = v.draft.length;
@@ -541,6 +599,7 @@ function renderLog(el, v){
       const d = v.draft[+inp.dataset.i]; d[inp.dataset.k] = inp.value; d.pre = false;
       inp.closest('.set-row').querySelectorAll('input').forEach(x => x.classList.remove('prefilled'));
       inp.closest('.set-row').classList.toggle('filled', d.w !== '');
+      const slot = inp.closest('.set-row').querySelector('.vs-slot'); if (slot) slot.innerHTML = vsChip(rowVs(+inp.dataset.i));
     });
     inp.addEventListener('focus', () => { if (inp.classList.contains('prefilled')) inp.select(); });
     // commit (blur / keyboard Done), not every keystroke
@@ -566,6 +625,7 @@ function renderLog(el, v){
     if (!s) { s = {id: uid(), date: v.date, group: v.g, focus: v.focus || null, focusName: focusName(v.g, v.focus), phase: phase || null, entries: []}; db.sessions.push(s); }
     const idx = s.entries.findIndex(x => x.exId === v.exId);
     const entry = {exId: v.exId, name: e.name, sets};
+    if (tsets.length && tgt.src !== 'plan') entry.target = {src: tgt.src, sets: tsets.map(t => ({w: t.w || 0, r: t.r}))}; // target at the time → met/beat/missed in the Journal
     if (idx >= 0) s.entries[idx] = entry; else s.entries.push(entry);
     s.updated = Date.now();
     save();
@@ -726,7 +786,8 @@ function renderSession(el, v){
     ${s.entries.map(en => `<div class="detail-ex">
       <div class="hd"><span class="n">${esc(en.name)}</span>
         <button class="mini-btn" data-edit="${en.exId}">Edit</button><button class="mini-btn red" data-del="${en.exId}">Delete</button></div>
-      <table class="set-table">${validSets(en.sets).map((x, i) => `<tr><td>Set ${i + 1}</td><td><b>${fmtNum(x.w)} lb</b> × ${x.r}</td><td>e1RM ${fmtNum(Math.round(e1rm(x.w, x.r)))}</td></tr>`).join('')}</table>
+      ${en.target ? `<div class="jr-tgt">${en.target.src === 'coach' ? '🧠 Coach' : '⚙️ Auto'} target: ${en.target.sets.map(tsetStr).join(', ')}</div>` : ''}
+      <table class="set-table">${validSets(en.sets).map((x, i) => `<tr><td>Set ${i + 1}</td><td><b>${fmtNum(x.w)} lb</b> × ${x.r}</td><td>${en.target && en.target.sets[i] ? vsChip(vsTarget(x.w, x.r, en.target.sets[i])) : `e1RM ${fmtNum(Math.round(e1rm(x.w, x.r)))}`}</td></tr>`).join('')}</table>
     </div>`).join('')}
     <div class="btn-row"><button class="btn small" id="addMore">＋ Add exercise to this day</button></div>
     <div class="btn-row"><button class="btn small danger" id="delSession">Delete entire workout</button></div>`;
@@ -1602,6 +1663,27 @@ const Coach = {
       db.coach.nutrition = nut;
     }
     syncAll(db); // new exercises show up under All; history untouched
+    // optional per-exercise set prescriptions: when present, replaces the stored set
+    if (plan.prescriptions && typeof plan.prescriptions === 'object' && !Array.isArray(plan.prescriptions)) {
+      const all = GROUPS.flatMap(g => db.exercises[g.id] || []);
+      const rxs = {};
+      for (const [key, p] of Object.entries(plan.prescriptions)) {
+        if (!p || typeof p !== 'object' || !Array.isArray(p.sets)) continue;
+        const ex = all.find(x => x.id === key) || all.find(x => lc(x.name) === lc(key)) || (p.name ? all.find(x => lc(x.name) === lc(p.name)) : null);
+        if (!ex) continue;
+        const sets = p.sets.slice(0, 20).map(x => x && typeof x === 'object' ? {weight: x.weight !== null && x.weight !== '' && Number.isFinite(+x.weight) && +x.weight >= 0 && +x.weight <= 2000 ? Math.round(+x.weight * 100) / 100 : null, reps: Number.isFinite(+x.reps) && +x.reps >= 1 && +x.reps <= 100 ? Math.round(+x.reps) : null} : null).filter(x => x && x.reps);
+        if (!sets.length) continue;
+        const rx = {sets};
+        if (p.note) rx.note = String(p.note).slice(0, 300);
+        if (/^\d{4}-\d\d-\d\d$/.test(p.updated || '')) rx.updated = p.updated;
+        if (PHASES[p.phase]) rx.phase = p.phase;
+        rxs[ex.id] = rx;
+      }
+      const old = db.coach.prescriptions || {};
+      const changed = Object.keys(rxs).filter(id => JSON.stringify(old[id]) !== JSON.stringify(rxs[id]));
+      if (changed.length) changes.unshift({where: 'Set targets', diffs: changed.slice(0, 8).map(id => `${(all.find(x => x.id === id) || {}).name}: ${rxs[id].sets.map(x => x.weight ? `${x.weight}×${x.reps}` : x.weight === 0 ? `BW×${x.reps}` : `?×${x.reps}`).join(', ')}`).concat(changed.length > 8 ? [`+ ${changed.length - 8} more`] : [])});
+      db.coach.prescriptions = rxs;
+    }
     db.coach.planVersion = plan.version;
     db.coach.planUpdatedAt = plan.updatedAt || null;
     db.coach.message = plan.message || '';

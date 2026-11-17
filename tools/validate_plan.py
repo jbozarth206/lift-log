@@ -9,10 +9,12 @@ Checks:
   - version is an integer and is HIGHER than the published one
     (compares with `git show origin/main:plan.json` unless --prev/--no-prev is given)
   - every exercise has a name or id, sets 1-20, reps [min, max] 1-100, rest 0-900 s
-  - with --data: every "id" exists in that body group in the user's synced data
+  - optional "prescriptions": {exerciseId: {sets: [{weight, reps}], note, updated, phase}}
+  - with --data: every "id" exists in that body group in the user's synced data,
+    and every prescriptions key matches an exercise id (or name)
 Exit code 0 = OK to push, 1 = fix the errors first.
 """
-import json, subprocess, sys
+import json, re, subprocess, sys
 
 PHASES = {'bulk', 'cut'}
 FOCUSES = {
@@ -52,7 +54,7 @@ def main(argv):
     if 'message' in plan and not isinstance(plan['message'], str): errors.append('"message" must be a string')
     if len(plan.get('message') or '') > 1000: warns.append('message is long (>1000 chars)')
     for k in plan:
-        if k not in {'schema', 'version', 'updatedAt', 'message', 'phases', 'nutrition', 'options'}: warns.append(f'unknown top-level key "{k}" (ignored by the app)')
+        if k not in {'schema', 'version', 'updatedAt', 'message', 'phases', 'nutrition', 'options', 'prescriptions'}: warns.append(f'unknown top-level key "{k}" (ignored by the app)')
     nut = plan.get('nutrition')
     if nut is not None:
         if not isinstance(nut, dict): errors.append('"nutrition" must be an object like {"bulk": {"kcal":..,"p":..,"c":..,"f":..}}')
@@ -76,6 +78,43 @@ def main(argv):
             data = json.load(f)
         data_ids = {g: {e['id']: e['name'] for e in data.get('exercises', {}).get(g, [])} for g in FOCUSES}
         for g in ARM_HOSTS: data_ids[g] = {**data_ids[g], **data_ids['arms']}  # back/chest may reference Arms exercises
+
+    rx = plan.get('prescriptions')
+    rx_count = 0
+    if rx is not None:
+        if not isinstance(rx, dict): errors.append('"prescriptions" must be an object keyed by exercise id')
+        else:
+            all_ids = {}
+            if data_ids is not None:
+                for g in FOCUSES: all_ids.update(data_ids[g])
+            names = {n.strip().lower() for n in all_ids.values()}
+            for key, p in rx.items():
+                w = f'prescriptions["{key}"]'
+                if not isinstance(key, str) or not key.strip(): errors.append(f'{w}: key must be an exercise id'); continue
+                if not isinstance(p, dict): errors.append(f'{w} must be an object'); continue
+                rx_count += 1
+                for k in p:
+                    if k not in {'sets', 'note', 'updated', 'phase', 'name'}: warns.append(f'{w}: unknown key "{k}" (ignored)')
+                sets = p.get('sets')
+                if not isinstance(sets, list) or not 1 <= len(sets) <= 20: errors.append(f'{w}: "sets" must be a list of 1-20 {{"weight", "reps"}} objects'); sets = []
+                for n, st in enumerate(sets, 1):
+                    if not isinstance(st, dict): errors.append(f'{w}.sets[{n}] must be an object'); continue
+                    wt, rp = st.get('weight'), st.get('reps')
+                    if wt is not None and (not isinstance(wt, (int, float)) or isinstance(wt, bool) or not 0 <= wt <= 2000): errors.append(f'{w}.sets[{n}]: "weight" must be lb 0-2000 (0 = bodyweight) or null')
+                    if not isinstance(rp, int) or isinstance(rp, bool) or not 1 <= rp <= 100: errors.append(f'{w}.sets[{n}]: "reps" must be an integer 1-100')
+                    for k in st:
+                        if k not in {'weight', 'reps'}: warns.append(f'{w}.sets[{n}]: unknown key "{k}" (ignored)')
+                note = p.get('note')
+                if note is not None and (not isinstance(note, str) or len(note) > 300): errors.append(f'{w}: "note" must be a string up to 300 chars')
+                up = p.get('updated')
+                if up is None: warns.append(f'{w}: no "updated" date; the app cannot tell when it has been done and will keep showing it')
+                elif not isinstance(up, str) or not re.fullmatch(r'\d{4}-\d\d-\d\d', up): errors.append(f'{w}: "updated" must be "YYYY-MM-DD"')
+                ph = p.get('phase')
+                if ph is not None and ph not in PHASES: errors.append(f'{w}: "phase" must be bulk or cut')
+                if data_ids is not None and key not in all_ids:
+                    nm = (p.get('name') or key).strip().lower()
+                    if nm in names: warns.append(f'{w}: not an exercise id; matched by name')
+                    else: errors.append(f'{w}: no exercise with this id (or name) in the synced data; the app will skip it')
 
     phases = plan.get('phases')
     count = 0
@@ -141,7 +180,7 @@ def main(argv):
     if errors:
         print(f'\nFAILED: {len(errors)} error(s). Do not push.')
         return 1
-    print(f'OK: plan v{v}, {count} exercise entries. Safe to push.')
+    print(f'OK: plan v{v}, {count} exercise entries, {rx_count} prescriptions. Safe to push.')
     return 0
 
 
