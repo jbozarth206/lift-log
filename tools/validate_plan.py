@@ -20,8 +20,10 @@ FOCUSES = {
     'chest': {'upper', 'mid', 'lower', 'all'},
     'legs': {'quads', 'hamstrings', 'glutes', 'calves', 'all'},
     'shoulders': {'front', 'side', 'rear', 'all'},
+    'arms': {'biceps', 'triceps', 'forearms', 'all'},
 }
-ALLOWED_KEYS = {'id', 'name', 'sets', 'reps', 'rest', 'notes'}
+ARM_HOSTS = {'back', 'chest'}
+ALLOWED_KEYS = {'id', 'name', 'sets', 'reps', 'rest', 'notes', 'arm'}
 
 
 def main(argv):
@@ -50,13 +52,30 @@ def main(argv):
     if 'message' in plan and not isinstance(plan['message'], str): errors.append('"message" must be a string')
     if len(plan.get('message') or '') > 1000: warns.append('message is long (>1000 chars)')
     for k in plan:
-        if k not in {'schema', 'version', 'updatedAt', 'message', 'phases'}: warns.append(f'unknown top-level key "{k}" (ignored by the app)')
+        if k not in {'schema', 'version', 'updatedAt', 'message', 'phases', 'nutrition', 'options'}: warns.append(f'unknown top-level key "{k}" (ignored by the app)')
+    nut = plan.get('nutrition')
+    if nut is not None:
+        if not isinstance(nut, dict): errors.append('"nutrition" must be an object like {"bulk": {"kcal":..,"p":..,"c":..,"f":..}}')
+        else:
+            for ph, t in nut.items():
+                if ph not in PHASES: errors.append(f'nutrition.{ph}: unknown phase (use bulk or cut)'); continue
+                if not isinstance(t, dict): errors.append(f'nutrition.{ph} must be an object'); continue
+                for k, hi in (('kcal', 10000), ('p', 1000), ('c', 2000), ('f', 1000)):
+                    x = t.get(k)
+                    if x is not None and (not isinstance(x, (int, float)) or isinstance(x, bool) or not 0 < x <= hi): errors.append(f'nutrition.{ph}.{k} must be a number 1-{hi}')
+                for k in t:
+                    if k not in {'kcal', 'p', 'c', 'f'}: warns.append(f'nutrition.{ph}: unknown key "{k}" (ignored)')
+    opts = plan.get('options')
+    if opts is not None:
+        if not isinstance(opts, dict): errors.append('"options" must be an object')
+        elif 'autoArmFinishers' in opts and not isinstance(opts['autoArmFinishers'], bool): errors.append('options.autoArmFinishers must be true or false')
 
     data_ids = None
     if data_path:
         with open(data_path) as f:
             data = json.load(f)
         data_ids = {g: {e['id']: e['name'] for e in data.get('exercises', {}).get(g, [])} for g in FOCUSES}
+        for g in ARM_HOSTS: data_ids[g] = {**data_ids[g], **data_ids['arms']}  # back/chest may reference Arms exercises
 
     phases = plan.get('phases')
     count = 0
@@ -97,6 +116,7 @@ def main(argv):
                         errors.append(f'{w}: "reps" must be [min, max] integers 1-100 with min <= max')
                     rest = it.get('rest')
                     if rest is not None and (not isinstance(rest, int) or isinstance(rest, bool) or not 0 <= rest <= 900): errors.append(f'{w}: "rest" must be seconds 0-900')
+                    if 'arm' in it and (not isinstance(it['arm'], bool) or g not in ARM_HOSTS): errors.append(f'{w}: "arm" must be true/false and only on back/chest entries')
                     notes = it.get('notes')
                     if notes is not None and (not isinstance(notes, str) or len(notes) > 400): errors.append(f'{w}: "notes" must be a string up to 400 chars')
 

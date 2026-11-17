@@ -22,11 +22,11 @@ gh api 'repos/jbozarth206/lift-log-data/commits?path=data/liftlog.json&per_page=
 ### Data format (same as the app's backup export)
 ```jsonc
 {
-  "app": "liftlog", "appVersion": "5.0",
+  "app": "liftlog", "appVersion": "6.0",
   "exportedAt": "2026-11-11T18:40:00.000Z",      // when the phone pushed it
-  "version": 5,                                   // data schema version
+  "version": 6,                                   // data schema version
   "phase": {"id": "bulk", "start": "2026-11-11"}, // current 4-week block (bulk|cut), null if not chosen yet
-  "exercises": { "back": [{"id": "mhx2k1abcde", "name": "Lat Pulldown"}], "chest": [], "legs": [], "shoulders": [] },
+  "exercises": { "back": [{"id": "mhx2k1abcde", "name": "Lat Pulldown"}], "chest": [], "legs": [], "shoulders": [], "arms": [] },
   "plans": { "bulk": { "back": { "upper": [{"exId": "mhx2k1abcde", "sets": 4, "min": 6, "max": 8, "rest": 150, "notes": "…"}], "mid": [], "lower": [], "all": [] } }, "cut": {} },
   "coach": {"planVersion": 1, "planUpdatedAt": null, "lastCheck": "…"},    // which plan.json version the phone has applied
   "profile": {"height": 70},                      // inches; null until he sets it
@@ -56,6 +56,45 @@ gh api 'repos/jbozarth206/lift-log-data/commits?path=data/liftlog.json&per_page=
   | `note` | string ≤140 | Optional, may be `""`. |
 
   The app's trend line is a **7-day rolling average**: it averages same-day entries into one daily value, then for each day it averages the daily values from the previous 7 calendar days (that day included). Use the same method to judge bulk and cut rate, e.g. about 0.25–0.5 lb/week up on a bulk and about 0.5–1% of body weight per week down on a cut.
+- **Arms (v6)**: `exercises.arms` and `plans.<phase>.arms.<biceps|triceps|forearms|all>`. Back/chest plan lists may contain **Arms exercise ids** (biceps finishers on back, triceps finishers on chest). Look up a session entry's `exId` across **all** groups' `exercises`. Arms-day sessions have `group: "arms"`.
+- **Protocol log** (top-level `peds`, v6+; missing in older data, so treat it as empty). This is a neutral personal log of what he entered. Report what was logged against what he planned; don't give dosing advice.
+  ```jsonc
+  "peds": {
+    "compounds": [{"id": "…", "name": "Testosterone Enanthate", "ester": "Enanthate", "mgPerMl": 250,
+                   "weeklyMg": 500, "schedule": {"type": "interval", "everyDays": 3.5},   // or {"type":"weekdays","days":[1,4]}  (0=Sun … 6=Sat)
+                   "start": "2026-11-16", "end": "2027-02-08", "active": true, "notes": ""}],
+    "doses": [{"id": "…", "compoundId": "…", "name": "Testosterone Enanthate", "at": "2026-11-16T08:30",
+               "mg": 250, "ml": 1, "site": "Glute L", "note": ""}],
+    "labs": [{"id": "…", "date": "2026-11-10", "kind": "bloodwork", "text": "Total T 1100 ng/dL, E2 42 pg/mL, Hct 49%"}]
+  }
+  ```
+  | Field | Unit / type | Notes |
+  |---|---|---|
+  | `compounds[].mgPerMl` | mg per mL, number or null | Vial concentration he entered. |
+  | `compounds[].weeklyMg` | mg per week, number or null | His planned weekly total. |
+  | `compounds[].schedule` | `{type:"interval", everyDays:N}` (N may be a decimal, e.g. 3.5) or `{type:"weekdays", days:[0-6]}` | |
+  | `compounds[].start` / `end` | `YYYY-MM-DD` or null | Cycle window. `end: null` = open-ended. |
+  | `compounds[].active` | bool | Inactive compounds are never "due". |
+  | `doses[].at` | local `YYYY-MM-DDTHH:MM` (his time zone, America/New_York) | |
+  | `doses[].mg` | mg (required) | `ml` is mL (computed from `mgPerMl` unless he overrode it). |
+  | `doses[].compoundId` | id or null | `name` is a snapshot, so a dose survives deletion of its compound. |
+  | `doses[].site` | string | One of: Glute L/R, Delt L/R, Quad L/R, Ventroglute L/R, Lat L/R, Pec L/R, Sub-Q, Other, or `""`. |
+  | `labs[].kind` | `"bloodwork"`, `"side-effect"` or `"note"` | `text` is free text (markers with units, symptoms…). |
+
+  The app's "due" logic: for `interval`, the next dose = last dose time + `everyDays` (or `start` if nothing is logged yet). For `weekdays`, it's the next listed weekday on or after today with no dose. A due date before today shows as overdue. Weekly totals run Monday–Sunday.
+- **Food log** (top-level `food`, v6+; treat a missing key as empty):
+  ```jsonc
+  "food": {
+    "entries": [{"id": "…", "date": "2026-11-16", "meal": "lunch", "name": "Chicken breast", "qty": "200 g",
+                 "kcal": 330, "p": 62, "c": 0, "f": 7}],
+    "favorites": [{"id": "…", "name": "Whey shake", "qty": "1 scoop", "kcal": 120, "p": 24, "c": 3, "f": 1.5}],
+    "targets": {"kcal": null, "p": null, "c": null, "f": null},   // his own targets (null = not set)
+    "targetsSource": "coach"                                       // "coach" = use plan.json nutrition for his phase, "manual" = use targets
+  }
+  ```
+  - `meal`: `breakfast`, `lunch`, `dinner` or `snack`. `qty` is free text. `kcal` is kcal; `p`/`c`/`f` are **grams**. If he left kcal blank, the app filled in `4p + 4c + 9f`.
+  - Daily totals = sum of `entries` for a `date`. Days with no entries mean **not logged**, not zero intake.
+  - The coach targets he sees are in `coach.nutrition.<phase>` once a plan with `nutrition` has been applied.
 - **Profile**: `profile.height` is in **inches** (e.g. 70 = 5′10″), or `null` if not set. BMI = `703 × weight / height²`.
 - If `coach.planVersion` is lower than `plan.json`'s `version`, his phone hasn't opened the app since your last publish.
 
@@ -79,8 +118,16 @@ Tips:
 - `notes` are short cues (≤400 chars) that he sees on the logging screen.
 - Base progression on his recent top sets and estimated 1RM (Epley: `w × (1 + r/30)`).
 
-## 3. Rules
-1. **Never write to `lift-log-data`.** That includes `body` and `profile`: read them, never edit them. Don't edit, delete, force-push or rewrite history there. It's his only cloud copy, and the app overwrites it.
+## 3. Review cadence: 3× per week
+
+Coach reviews his data **three times a week** (e.g. Mon/Wed/Fri, spaced about 2–3 days apart). Each review:
+1. Pull `data/liftlog.json`. Check `exportedAt` and the last commit date. If nothing new has synced since the last review, say so and change nothing.
+2. Look at the sessions since the last review: top sets, estimated 1RM, rep targets hit or missed, and arm finishers. Look at the body-weight 7-day average trend against the phase goal, daily food totals against targets (logged days only), and the protocol log (doses logged vs planned, any health notes). Report the protocol data neutrally.
+3. If adjustments are warranted, edit `plan.json` (exercises, sets/reps/rest, `notes`, `nutrition`), write a short `message` summarizing the why, bump `version`, validate, and push. Small, specific changes beat full rewrites. Leave out combos you aren't changing.
+4. If no plan change is needed, don't bump the version just to send a message. Message him through the usual channel instead.
+
+## 4. Rules
+1. **Never write to `lift-log-data`.** That includes `body`, `profile`, `peds` and `food`: read them, never edit them. Don't edit, delete, force-push or rewrite history there. It's his only cloud copy, and the app overwrites it.
 2. In `lift-log`, change **only `plan.json`** (and these docs if asked). Don't touch app code (`app.js`, `sw.js`, `index.html`, …) unless the user asks.
 3. **Always run `tools/validate_plan.py`** and push only if it prints `OK`. Every published change needs a version bump.
 4. Never put tokens, passwords or personal data in `plan.json`. It's public.

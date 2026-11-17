@@ -46,6 +46,7 @@ It never deletes logged workouts or exercise IDs. If an exercise is dropped from
   - `chest` → `upper`, `mid`, `lower`, `all`
   - `legs` → `quads`, `hamstrings`, `glutes`, `calves`, `all`
   - `shoulders` → `front`, `side`, `rear`, `all`
+  - `arms` → `biceps`, `triceps`, `forearms`, `all` *(new in app v6)*
 - `all` is optional. Any exercise not listed under `all` is still added there automatically, with default targets for that phase.
 
 **Exercise entry** (the list order is the order shown in the app)
@@ -63,3 +64,41 @@ When the app applies a plan, its targets **replace** any manual edits the user m
 Invalid entries are skipped, and an invalid file (wrong `schema`, or a missing or non-integer `version`) is ignored. Still, always run `python3 tools/validate_plan.py` before pushing.
 
 > Body metrics (`body`, `profile`) live only in the synced data file (`lift-log-data/data/liftlog.json`, see COACH_GUIDE.md). `plan.json` doesn't hold them and the app ignores any such keys in it. Put body-weight guidance for the week in `message`.
+
+## Additions in app v6 (all optional and backward compatible)
+
+Any plan without these keys works exactly as before. The app keeps its built-in defaults for any group or focus the plan leaves out, including all of `arms`.
+
+### `arms` body group
+`phases.<phase>.arms.<biceps|triceps|forearms|all>` uses the same exercise-entry format. Arms exercises live in their own group, so a curl keeps **one shared history** whether it's done on Arms day or as a Back finisher.
+
+### Arm finishers on Back and Chest days
+By default, each `back` focus ends with 1–2 biceps exercises and each `chest` focus ends with 1–2 triceps exercises, in both phases. These are Arms-group exercises used as finishers.
+- **If your list for a back/chest focus has no Arms exercise**, the app keeps its current finishers and appends them after your list. Plans written before v6 keep working this way.
+- **To set the finishers yourself**, include them in the list. Use the `id` of an Arms exercise, or a `name` that matches one (e.g. `"Hammer Curl"`), or add `"arm": true` to create a new Arms exercise from a `name`:
+  ```json
+  {"name": "Spider Curl", "sets": 3, "reps": [10, 12], "rest": 60, "arm": true}
+  ```
+  Once a list contains at least one Arms exercise, it fully controls that focus's finishers.
+- **To turn off auto-kept finishers everywhere**, set the top-level `"options": {"autoArmFinishers": false}`.
+
+| Field | Type | Where | Meaning |
+|---|---|---|---|
+| `arm` | bool | exercise entry in `back`/`chest` | `true` = find or create this exercise in the Arms group. |
+| `options.autoArmFinishers` | bool | top level | Default `true`. Set `false` to stop keeping current finishers when a back/chest list has no Arms exercise. |
+
+### `nutrition`: daily calorie and macro targets per phase
+```json
+"nutrition": {
+  "bulk": {"kcal": 3000, "p": 200, "c": 350, "f": 85},
+  "cut":  {"kcal": 2300, "p": 210, "c": 220, "f": 65}
+}
+```
+| Field | Unit | Range |
+|---|---|---|
+| `kcal` | kcal per day | 1–10000 |
+| `p` / `c` / `f` | grams of protein / carbs / fat per day | 1–1000 / 1–2000 / 1–1000 |
+
+- The Food screen shows the targets for **his current phase** as "🧠 Coach targets". If he sets his own targets in the app, his take priority until he taps "Use coach targets".
+- When a plan with `nutrition` is applied, it **replaces** the stored coach targets: a phase you leave out has no coach targets. If you don't change nutrition, leave the key out entirely, or copy the previous values.
+- A change to the targets shows in the update banner.
