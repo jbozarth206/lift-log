@@ -22,9 +22,9 @@ gh api 'repos/jbozarth206/lift-log-data/commits?path=data/liftlog.json&per_page=
 ### Data format (same as the app's backup export)
 ```jsonc
 {
-  "app": "liftlog", "appVersion": "7.0",
+  "app": "liftlog", "appVersion": "7.1",
   "exportedAt": "2026-11-11T18:40:00.000Z",      // when the phone pushed it
-  "version": 7,                                   // data schema version
+  "version": 8,                                   // data schema version
   "phase": {"id": "bulk", "start": "2026-11-11"}, // current 4-week block (bulk|cut), null if not chosen yet
   "exercises": { "back": [{"id": "mhx2k1abcde", "name": "Lat Pulldown"}], "chest": [], "legs": [], "shoulders": [], "arms": [] },
   "plans": { "bulk": { "back": { "upper": [{"exId": "mhx2k1abcde", "sets": 4, "min": 6, "max": 8, "rest": 150, "notes": "…"}], "mid": [], "lower": [], "all": [] } }, "cut": {} },
@@ -122,6 +122,8 @@ gh api 'repos/jbozarth206/lift-log-data/commits?path=data/liftlog.json&per_page=
   | `results[].status` | optional string | Present only when not `final` (e.g. `"preliminary"`, `"amended"`, `"corrected"`). |
 
   New results appear only after he opens the app and imports (each MyChart sign-in lasts about an hour, so imports happen when he taps Sync or reconnects). Use `lastSync` to know how fresh the list is. Report lab values factually against the lab's own ranges, and point out anything flagged. Don't diagnose or give dosing advice; suggest he discuss flagged results with his clinician.
+- **Settings** (top-level `settings`, v8 / app 7.1+; treat a missing key as defaults): `{"restTimer": true, "restSound": true, "restVolume": 0.8, "restOverride": null}`. `restOverride` is seconds (15–900) or `null`. When set, he has chosen one rest length for **every** exercise, and it beats your plan `rest`. Mention it if your rest prescriptions matter. The other keys are device preferences you can ignore.
+- **Rest timer & plan `rest`**: each plan item's `rest` (seconds) drives the rest countdown on his logging screen (it dings at 10 s left and at 0). Omitted `rest` falls back to Bulk 165 s compound / 90 s isolation, Cut 75 s / 60 s. `0` = no timer. Timer runs aren't logged, so you can't see actual rest taken.
 - **Profile**: `profile.height` is in **inches** (e.g. 70 = 5′10″), or `null` if not set. BMI = `703 × weight / height²`.
 - If `coach.planVersion` is lower than `plan.json`'s `version`, his phone hasn't opened the app since your last publish.
 

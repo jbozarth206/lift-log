@@ -9,7 +9,7 @@ const GROUPS = [
   {id:'arms', name:'Arms', color:'#ffc145', icon:'<path d="M5 18c1-5 3-8 6-10l2-3 3 1-1 4c2 1 3 3 3 5 0 2-2 4-5 4H8" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>'}
 ];
 const ARM_HOSTS = ['back', 'chest']; // groups that get arm finishers (biceps on back, triceps on chest)
-const APP_VERSION = '7.0';
+const APP_VERSION = '7.1';
 const SEED_PLAN_VERSION = 1; // plan.json v1 == built-in defaults
 const PHASE_DAYS = 28;
 const PHASES = {
@@ -76,9 +76,14 @@ const V1_NAMES = {
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const lc = s => String(s).trim().toLowerCase();
 const parseDef = d => { const [name, sets, min, max, rest] = d.split('|'); return {name, sets: +sets, min: +min, max: +max, rest: +rest}; };
+/* Rest defaults when a plan item has no rest: Bulk compound 165 s, Bulk isolation 90 s, Cut compound 75 s, Cut isolation 60 s */
+const COMPOUND_RE = /squat|deadlift|bench|press|\brows?\b|pull-?up|chin-?up|\bdips?\b|thrust|lunge|rack pull|good morning|clean|snatch/i;
+const DEFAULT_REST = {bulk: {compound: 165, isolation: 90}, cut: {compound: 75, isolation: 60}};
+const isCompound = name => COMPOUND_RE.test(name || '');
+const defaultRest = (phase, name) => DEFAULT_REST[phase === 'cut' ? 'cut' : 'bulk'][isCompound(name) ? 'compound' : 'isolation'];
 /** fallback targets for an exercise with no plan entry in a phase (custom ones keep their own sets/reps) */
 function fallbackItem(phase, ex){
-  const [sets, min, max, rest] = PHASES[phase].fallback;
+  const [sets, min, max] = PHASES[phase].fallback, rest = defaultRest(phase, ex && ex.name);
   return ex && ex.sets ? {exId: ex.id, sets: ex.sets, min: ex.min, max: ex.max, rest: ex.rest || rest} : {exId: ex.id, sets, min, max, rest};
 }
 /** Build {focusId: [items], all: [items]} for one phase+group, reusing pool exercises by name. */
@@ -134,6 +139,14 @@ function syncAll(d){
   }
 }
 const emptyPeds = () => ({compounds: [], doses: [], labs: []});
+const DEFAULT_SETTINGS = {restTimer: true, restSound: true, restVolume: 0.8, restOverride: null};
+function normSettings(x){
+  const o = Object.assign({}, DEFAULT_SETTINGS, x && typeof x === 'object' && !Array.isArray(x) ? x : {});
+  o.restTimer = o.restTimer !== false; o.restSound = o.restSound !== false;
+  o.restVolume = Number.isFinite(+o.restVolume) ? Math.min(1, Math.max(0, +o.restVolume)) : DEFAULT_SETTINGS.restVolume;
+  o.restOverride = Number.isFinite(+o.restOverride) && +o.restOverride >= 15 && +o.restOverride <= 900 && o.restOverride !== null ? Math.round(+o.restOverride) : null;
+  return o;
+}
 const emptyLabs = () => ({source: null, connectedAt: null, lastSync: null, results: [], reports: {}});
 function normLabs(l){
   l = Object.assign(emptyLabs(), l && typeof l === 'object' && !Array.isArray(l) ? l : {});
@@ -162,7 +175,7 @@ function stripArms(plan, d){
   return plan;
 }
 function freshDb(){
-  const d = {version: 7, exercises: {}, plans: {}, phase: null, coach: {planVersion: SEED_PLAN_VERSION, banner: null}, sessions: [], body: [], profile: {height: null}, peds: emptyPeds(), food: emptyFood(), labs: emptyLabs()};
+  const d = {version: 8, exercises: {}, plans: {}, phase: null, coach: {planVersion: SEED_PLAN_VERSION, banner: null}, sessions: [], body: [], profile: {height: null}, peds: emptyPeds(), food: emptyFood(), labs: emptyLabs(), settings: normSettings()};
   for (const g of GROUPS) d.exercises[g.id] = [];
   for (const ph of Object.keys(PHASES)) { d.plans[ph] = {}; for (const g of ['arms', ...GROUPS.map(x => x.id).filter(x => x !== 'arms')]) d.plans[ph][g] = buildPlan(ph, g, d.exercises); }
   return d;
@@ -212,6 +225,12 @@ function migrate(d){
     d.version = 7;
   }
   d.labs = normLabs(d.labs);
+  if (d.version < 8) {
+    // v8 (app 7.1): rest-timer settings only
+    d.settings = normSettings(d.settings);
+    d.version = 8;
+  }
+  d.settings = normSettings(d.settings);
   for (const ph of Object.keys(PHASES)) { d.plans[ph] = d.plans[ph] || {}; for (const g of GROUPS) if (!d.plans[ph][g.id]) d.plans[ph][g.id] = buildPlan(ph, g.id, d.exercises); }
   syncAll(d);
   return d;
@@ -222,7 +241,7 @@ function load(){
     if (raw) {
       const d = JSON.parse(raw);
       if (d && d.exercises && Array.isArray(d.sessions)) {
-        if (!d.version || d.version < 7) localStorage.setItem(STORE_KEY + '.backup-v' + (d.version || 1), raw); // safety copy before upgrading
+        if (!d.version || d.version < 8) localStorage.setItem(STORE_KEY + '.backup-v' + (d.version || 1), raw); // safety copy before upgrading
         return migrate(d);
       }
     }
@@ -445,6 +464,7 @@ function renderGroup(el, v){
 }
 
 /* ---------- Workout: Log an exercise ---------- */
+const draftCache = new Map();
 function renderLog(el, v){
   const g = groupOf(v.g);
   const phase = v.phase === undefined ? curPhase() : v.phase; // session's phase (null = unlabeled old session)
@@ -456,6 +476,8 @@ function renderLog(el, v){
   const e = inPlan || (found ? {...fallbackItem(tphase, found.ex), name: found.ex.name} : {name: existing ? existing.name : 'Exercise', ...fallbackItem(tphase, {id: v.exId})});
   const last = lastEntry(v.exId, v.date, session ? session.id : null);
   const lastSession = last && db.sessions.find(s => s.id === last.sessionId);
+  const dkey = [v.g, v.focus, v.exId, v.date, phase].join('|');
+  if (!v.draft && draftCache.has(dkey)) v.draft = draftCache.get(dkey);
   if (!v.draft) {
     if (existing) v.draft = existing.sets.map(s => ({w: s.w || '', r: s.r || '', pre: false}));
     else {
@@ -466,6 +488,7 @@ function renderLog(el, v){
       });
     }
   }
+  draftCache.set(dkey, v.draft); // unsaved sets survive hopping to another exercise and back (memory only)
   const fname = focusName(v.g, v.focus);
   setHeader(e.name, `${phase ? PHASES[phase].short + ' · ' : ''}${g.name}${fname && fname !== 'All' ? ' · ' + fname : ''} · ${fmtDay(v.date)}`);
   const hintFor = i => last && last.sets[i] ? `last ${fmtNum(last.sets[i].w)}×${last.sets[i].r}` : '';
@@ -482,13 +505,13 @@ function renderLog(el, v){
     </div>` : `
     <div class="last-card first" style="--c:${g.color}"><div class="lc-head"><span class="lc-title">First time</span></div>
       <div class="lc-first">No history for this exercise yet. Today sets your baseline 💪</div></div>`}
-    <div class="target-row" style="--c:${PHASES[tphase].color}"><div><span class="tr-lbl">Target · ${PHASES[tphase].short}</span><b>${e.sets} sets × ${repsLabel(e)} reps</b></div><div class="rest"><span class="tr-lbl">Rest</span><b>⏱ ${restLabel(e.rest)}</b></div></div>
+    <div class="target-row" style="--c:${PHASES[tphase].color}"><div><span class="tr-lbl">Target · ${PHASES[tphase].short}</span><b>${e.sets} sets × ${repsLabel(e)} reps</b></div><div class="rest"><span class="tr-lbl">Rest${db.settings.restOverride ? ' (yours)' : ''}</span><b>⏱ ${restLabel(restFor(e, tphase)) || 'none'}</b></div></div>
     ${e.item && e.item.notes ? `<div class="coach-note"><span class="cn-lbl">🧠 Coach note</span>${esc(e.item.notes)}</div>` : ''}
     <div class="sets-head"><div>Set</div><div style="text-align:center">Weight</div><div style="text-align:center">Reps</div><div></div></div>
     <div id="sets">
       ${v.draft.map((s, i) => `
-      <div class="set-row ${s.w !== '' ? 'filled' : ''} ${hintFor(i) ? 'has-hint' : ''}" style="--c:${g.color}">
-        <div class="sn">${i + 1}</div>
+      <div class="set-row ${s.w !== '' ? 'filled' : ''} ${s.done ? 'done' : ''} ${hintFor(i) ? 'has-hint' : ''}" style="--c:${g.color}">
+        <button class="sn" data-done="${i}" aria-label="Set ${i + 1} done">${s.done ? '✓' : i + 1}</button>
         <div class="field"><input type="number" inputmode="decimal" step="any" min="0" data-i="${i}" data-k="w" value="${s.w}" class="${s.pre ? 'prefilled' : ''}" placeholder="0"><span class="unit">lb</span>${hintFor(i) ? `<span class="hint">${hintFor(i)}</span>` : ''}</div>
         <div class="field"><input type="number" inputmode="numeric" min="0" step="1" data-i="${i}" data-k="r" value="${s.r}" class="${s.pre ? 'prefilled' : ''}" placeholder="${e.max}"><span class="unit">reps</span></div>
         <button class="del-set" data-del="${i}" aria-label="Remove set"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></button>
@@ -499,7 +522,20 @@ function renderLog(el, v){
     <div class="date-chip"><span>Workout date</span><input type="date" id="dateIn" value="${v.date}" max="${todayStr()}"></div>
     <div class="btn-row" style="margin-top:18px"><button class="btn primary" id="saveBtn">${existing ? 'Update' : 'Save'} ${esc(e.name)}</button></div>
     ${existing ? `<div class="btn-row"><button class="btn small danger" id="delEntry">Delete this entry</button></div>` : ''}
-    <p class="note">Blank reps count as the target (${e.max}). Sets with no weight or reps are skipped.</p>`;
+    <p class="note">Blank reps count as the target (${e.max}). Sets with no weight or reps are skipped. ${db.settings.restTimer ? `Rest timer (${restLabel(restFor(e, tphase)) || 'off'}) starts when a set has weight and reps; tap the set number to check off a prefilled set.` : ''}</p>`;
+  const restSecs = restFor(e, tphase);
+  /** a set was committed (Done/blur with weight+reps, or checked off) → mark it and start the rest countdown */
+  const commitSet = i => {
+    const d = v.draft[i]; if (!d) return;
+    d.done = true; d.pre = false;
+    const row = el.querySelectorAll('.set-row')[i];
+    if (row) { row.classList.add('done', 'filled'); const sn = row.querySelector('.sn'); if (sn) sn.textContent = '✓'; row.querySelectorAll('input').forEach(x => x.classList.remove('prefilled')); }
+    const key = `${v.exId}|${v.date}|${i}`, st = Rest.st;
+    if (st && st.key === key && !st.ended) return; // same set already timing: don't restart
+    const n = v.draft.length;
+    if (i === n - 1 || v.draft.every(x => x.done)) Rest.finish(e.name);
+    else Rest.start(restSecs, {name: e.name, set: i + 1, of: n}, key);
+  };
   el.querySelectorAll('input[data-i]').forEach(inp => {
     inp.addEventListener('input', () => {
       const d = v.draft[+inp.dataset.i]; d[inp.dataset.k] = inp.value; d.pre = false;
@@ -507,12 +543,21 @@ function renderLog(el, v){
       inp.closest('.set-row').classList.toggle('filled', d.w !== '');
     });
     inp.addEventListener('focus', () => { if (inp.classList.contains('prefilled')) inp.select(); });
+    // commit (blur / keyboard Done), not every keystroke
+    inp.addEventListener('change', () => { const d = v.draft[+inp.dataset.i]; if (d && d.w !== '' && d.r !== '' && !d.pre) commitSet(+inp.dataset.i); });
+  });
+  el.querySelectorAll('[data-done]').forEach(b => b.onclick = () => {
+    const i = +b.dataset.done, d = v.draft[i];
+    if (d.done) { d.done = false; b.textContent = i + 1; b.closest('.set-row').classList.remove('done'); return; }
+    if (d.w === '') { toast('Enter the weight first'); return; }
+    if (d.r === '') { d.r = e.max; const r = b.closest('.set-row').querySelector('input[data-k="r"]'); if (r) r.value = e.max; }
+    commitSet(i);
   });
   el.querySelectorAll('[data-del]').forEach(b => b.onclick = () => { v.draft.splice(+b.dataset.del, 1); render(); });
   $('#addSet').onclick = () => { const p = v.draft[v.draft.length - 1]; v.draft.push({w: p ? p.w : '', r: p ? p.r : '', pre: false}); render(); };
   if ($('#copyLast')) $('#copyLast').onclick = () => { v.draft = last.sets.map(s => ({w: s.w, r: s.r, pre: true})); render(); };
   if ($('#clearPre')) $('#clearPre').onclick = () => { v.draft = v.draft.map(d => d.pre ? {w: '', r: '', pre: false} : d); render(); };
-  $('#dateIn').onchange = ev => { if (ev.target.value) { v.date = ev.target.value; v.draft = null; render(); } };
+  $('#dateIn').onchange = ev => { if (ev.target.value) { draftCache.delete(dkey); v.date = ev.target.value; v.draft = null; render(); } };
   $('#saveBtn').onclick = () => {
     const sets = v.draft.map(s => ({w: parseFloat(s.w) || 0, r: s.r === '' ? (s.w !== '' ? e.max : 0) : (parseInt(s.r) || 0)}))
       .filter(s => s.w > 0 || s.r > 0);
@@ -527,11 +572,11 @@ function renderLog(el, v){
     const best = Math.max(...sets.map(x => e1rm(x.w, x.r)));
     const prev = exerciseHistory(v.exId).filter(h => h.date !== v.date).flatMap(h => h.sets.map(x => e1rm(x.w, x.r)));
     toast(prev.length && best > Math.max(...prev) ? '🏆 New PR! Saved' : '✓ Saved');
-    v.draft = null; pop();
+    draftCache.delete(dkey); v.draft = null; pop();
   };
   if ($('#delEntry')) $('#delEntry').onclick = () => {
     if (!confirm(`Delete ${e.name} from this session?`)) return;
-    removeEntry(session, v.exId); v.draft = null; toast('Entry deleted'); pop();
+    removeEntry(session, v.exId); draftCache.delete(dkey); v.draft = null; toast('Entry deleted'); pop();
   };
 }
 function removeEntry(session, exId){
@@ -853,6 +898,15 @@ function renderSettings(el){
       <button class="set-item" id="targetsSet"><span class="grow">Nutrition targets<span class="sub">${(() => { const T = foodTargets(); return T.source === 'none' ? 'Not set' : `${T.kcal || '–'} kcal · P ${T.p || '–'} · C ${T.c || '–'} · F ${T.f || '–'} g · ${T.source === 'coach' ? 'from coach' : 'yours'}`; })()}</span></span>›</button>
       <button class="set-item" id="heightSet"><span class="grow">Height<span class="sub">${fmtHeight(db.profile.height)}${db.profile.height ? ' · ' + fmtNum(db.profile.height) + ' in' : ''} · used for BMI</span></span>›</button>
     </div>
+    <div class="section-title">Rest timer</div>
+    <div class="set-group">
+      <button class="set-item" id="rtOn"><span class="grow">Rest timer<span class="sub">Starts when a set has weight and reps · dings at 10 s and at 0</span></span><span class="tog ${db.settings.restTimer ? 'on' : ''}">${db.settings.restTimer ? 'On' : 'Off'}</span></button>
+      <button class="set-item" id="rtSound"><span class="grow">Sound<span class="sub">Generated beep · mixes with your music</span></span><span class="tog ${db.settings.restSound ? 'on' : ''}">${db.settings.restSound ? 'On' : 'Off'}</span></button>
+      <div class="set-item rt-vol"><span class="grow">Volume<span class="sub">${Math.round(db.settings.restVolume * 100)}%</span></span><input type="range" id="rtVol" min="0" max="100" step="5" value="${Math.round(db.settings.restVolume * 100)}"><button class="mini-btn" id="rtTest">Test</button></div>
+      <div class="set-item"><span class="grow">Rest length<span class="sub">Plan uses each exercise's rest (defaults: Bulk ${DEFAULT_REST.bulk.compound}s compound / ${DEFAULT_REST.bulk.isolation}s isolation · Cut ${DEFAULT_REST.cut.compound}s / ${DEFAULT_REST.cut.isolation}s)</span></span>
+        <select id="rtLen" class="mini-select"><option value="">Plan</option>${[45, 60, 75, 90, 120, 150, 180, 240].map(x => `<option value="${x}" ${db.settings.restOverride === x ? 'selected' : ''}>${restLabel(x)}</option>`).join('')}</select></div>
+    </div>
+    <p class="note">The timer keeps exact time if you lock the phone, but iPhone can't ding while the screen is locked or Lift Log is in the background; keep the screen on during rest (the countdown shows the right time when you come back). Sound follows the silent switch.</p>
     ${coachSettingsHtml()}
     <div class="section-title">Backup</div>
     <div class="set-group">
@@ -878,6 +932,12 @@ function renderSettings(el){
   bindCoachSettings();
   $('#heightSet').onclick = heightSheet;
   $('#targetsSet').onclick = targetsSheet;
+  $('#rtOn').onclick = () => { db.settings.restTimer = !db.settings.restTimer; if (!db.settings.restTimer) Rest.skip(); save(); render(); };
+  $('#rtSound').onclick = () => { db.settings.restSound = !db.settings.restSound; save(); render(); };
+  $('#rtVol').oninput = ev => { db.settings.restVolume = +ev.target.value / 100; ev.target.closest('.set-item').querySelector('.sub').textContent = ev.target.value + '%'; };
+  $('#rtVol').onchange = () => { save(); Ding.unlock(); Ding.play('warn'); };
+  $('#rtTest').onclick = () => { Ding.unlock(); if (!db.settings.restSound) toast('Sound is off'); else Ding.play('go'); };
+  $('#rtLen').onchange = ev => { db.settings.restOverride = ev.target.value ? +ev.target.value : null; save(); render(); toast(ev.target.value ? 'Rest set to ' + restLabel(+ev.target.value) + ' for every exercise' : 'Using plan rest times'); };
   $('#importBtn').onclick = () => $('#fileIn').click();
   $('#fileIn').onchange = importData;
   $('#resetEx').onclick = () => {
@@ -925,7 +985,7 @@ function importData(ev){
       db = migrate({version: d.version || 1, exercises: d.exercises, plans: d.plans, phase: d.phase === undefined ? db.phase : d.phase, coach: d.coach || db.coach, sessions: d.sessions,
         body: Array.isArray(d.body) ? d.body : db.body, profile: d.profile || db.profile,
         peds: d.peds && typeof d.peds === 'object' ? d.peds : db.peds, food: d.food && typeof d.food === 'object' ? d.food : db.food,
-        labs: d.labs && typeof d.labs === 'object' && !Array.isArray(d.labs) ? d.labs : db.labs});
+        labs: d.labs && typeof d.labs === 'object' && !Array.isArray(d.labs) ? d.labs : db.labs, settings: d.settings || db.settings});
       save(); render(); toast('Backup restored');
     } catch (e) { toast('That file is not a Lift Log backup'); }
     ev.target.value = '';
@@ -1501,7 +1561,7 @@ const Coach = {
             let min = num(p.reps && p.reps[0] !== undefined ? p.reps[0] : p.min, 1, 100, fb[1]);
             let max = num(p.reps && p.reps[1] !== undefined ? p.reps[1] : p.max, 1, 100, Math.max(min, fb[2]));
             if (max < min) [min, max] = [max, min];
-            const it = {exId: ex.id, sets, min, max, rest: num(p.rest, 0, 900, fb[3])};
+            const it = {exId: ex.id, sets, min, max, rest: num(p.rest, 0, 900, defaultRest(ph, ex.name))};
             if (p.notes) it.notes = String(p.notes).slice(0, 400);
             items.push(it);
           }
@@ -1686,6 +1746,129 @@ function bindCoachSettings(){
   $('#planCheck').onclick = () => Coach.check(true);
 }
 
+
+
+/* ---------- Rest timer ---------- */
+/** rest seconds for a plan/exercise item: Settings override > plan `rest` (0 = no timer) > phase/type default */
+function restFor(e, phase){
+  if (db.settings.restOverride) return db.settings.restOverride;
+  if (e && e.rest === 0) return 0;
+  return e && e.rest > 0 ? e.rest : defaultRest(phase || curPhase(), e && e.name);
+}
+/** generated beeps via Web Audio (no assets). iOS needs a user gesture to unlock, done on any tap. */
+const Ding = {
+  ctx: null, primed: false, calls: [],
+  unlock(){
+    try {
+      if (!this.ctx) {
+        const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+        // 'ambient' mixes with his music instead of pausing it (iOS 16.4+ Safari audioSession API)
+        try { if (navigator.audioSession) navigator.audioSession.type = 'ambient'; } catch (e) {}
+        this.ctx = new AC();
+      }
+      if (this.ctx.state === 'suspended' || this.ctx.state === 'interrupted') this.ctx.resume();
+      if (!this.primed) { const b = this.ctx.createBuffer(1, 1, 22050), src = this.ctx.createBufferSource(); src.buffer = b; src.connect(this.ctx.destination); src.start(0); this.primed = true; }
+    } catch (e) {}
+  },
+  tone(freq, at, dur, vol, type){
+    const c = this.ctx, o = c.createOscillator(), g = c.createGain();
+    o.type = type || 'sine'; o.frequency.setValueAtTime(freq, at);
+    g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(vol, at + 0.012); g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+    o.connect(g); g.connect(c.destination); o.start(at); o.stop(at + dur + 0.05);
+  },
+  /** 'warn' = 10 s left (two short 880 Hz beeps) · 'go' = time's up (rising three-note chime) */
+  play(kind){
+    this.calls.push(kind);
+    if (!db.settings.restSound || !db.settings.restVolume) return false;
+    if (!this.ctx) this.unlock();
+    if (!this.ctx) return false;
+    try {
+      if (this.ctx.state !== 'running') this.ctx.resume();
+      const t = this.ctx.currentTime + 0.03, v = Math.max(0.001, Math.min(1, db.settings.restVolume));
+      if (kind === 'warn') { this.tone(880, t, 0.16, v); this.tone(880, t + 0.24, 0.16, v); }
+      else { this.tone(660, t, 0.18, v, 'triangle'); this.tone(880, t + 0.18, 0.18, v, 'triangle'); this.tone(1320, t + 0.36, 0.55, v, 'triangle'); }
+      return true;
+    } catch (e) { return false; }
+  }
+};
+['touchend', 'pointerdown', 'keydown'].forEach(ev => document.addEventListener(ev, () => Ding.unlock(), {capture: true, passive: true}));
+const buzz = pat => { try { if (navigator.vibrate) navigator.vibrate(pat); } catch (e) {} };
+const TIMER_KEY = 'liftlog.timer'; // device-local, never exported
+const DING_GRACE = 2000;           // a ding moment older than this (screen was locked / app backgrounded) is not played late
+const Rest = {
+  iv: null,
+  get st(){ try { return JSON.parse(localStorage.getItem(TIMER_KEY)); } catch (e) { return null; } },
+  set(st){ if (st) localStorage.setItem(TIMER_KEY, JSON.stringify(st)); else localStorage.removeItem(TIMER_KEY); this.paint(); if (st) this.loop(); },
+  start(secs, info, key){
+    if (!db.settings.restTimer || !(secs > 0)) return;
+    const now = Date.now();
+    this.set({mode: 'rest', endAt: now + secs * 1000, total: secs * 1000, startedAt: now, name: info.name, set: info.set, of: info.of, key, warned: secs <= 10, ended: false});
+  },
+  finish(name){ if (db.settings.restTimer) this.set({mode: 'done', label: name, until: Date.now() + 5000}); },
+  adjust(sec){
+    const s = this.st; if (!s || s.mode !== 'rest') return;
+    const now = Date.now();
+    if (s.ended) { if (sec <= 0) return; s.ended = false; s.endAt = now; s.total = 0; }
+    s.endAt = Math.max(now + 1000, s.endAt + sec * 1000);
+    s.total = Math.max(s.endAt - s.startedAt, 1000);
+    if (s.endAt - now > 10000) s.warned = false;
+    this.set(s); this.tick();
+  },
+  skip(){ this.set(null); },
+  tick(){
+    const s = this.st;
+    if (!s) { this.stop(); return; }
+    const now = Date.now();
+    if (s.mode === 'done') { if (now > s.until) this.set(null); else this.paint(); return; }
+    let dirty = false;
+    const rem = s.endAt - now;
+    if (!s.warned && rem <= 10000) {
+      s.warned = true; dirty = true;
+      if (rem > 0 && now - (s.endAt - 10000) <= DING_GRACE) { Ding.play('warn'); buzz([120, 80, 120]); }
+    }
+    if (!s.ended && rem <= 0) {
+      s.ended = true; dirty = true;
+      if (now - s.endAt <= DING_GRACE) { Ding.play('go'); buzz([250, 100, 250, 100, 250]); }
+    }
+    if (s.ended && now - s.endAt > 120000) { this.set(null); return; } // auto-hide 2 min after "Go"
+    if (dirty) localStorage.setItem(TIMER_KEY, JSON.stringify(s));
+    this.paint(s);
+  },
+  loop(){ if (!this.iv) this.iv = setInterval(() => this.tick(), 250); },
+  stop(){ clearInterval(this.iv); this.iv = null; this.paint(null); },
+  paint(s){
+    if (s === undefined) s = this.st;
+    let bar = document.getElementById('restBar');
+    document.body.classList.toggle('has-rest', !!s);
+    if (!s) { if (bar) bar.remove(); return; }
+    if (!bar) {
+      bar = document.createElement('div'); bar.id = 'restBar'; bar.setAttribute('role', 'timer'); bar.setAttribute('aria-live', 'off');
+      bar.innerHTML = `<div class="rb-ring"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="28" class="rb-track"/><circle cx="32" cy="32" r="28" class="rb-prog" pathLength="100"/></svg><span class="rb-icon"></span></div>
+        <div class="rb-main"><div class="rb-time"></div><div class="rb-label"></div></div>
+        <div class="rb-btns"><button class="rb-btn" data-rb="-15">−15</button><button class="rb-btn" data-rb="15">+15</button><button class="rb-btn rb-skip" data-rb="skip">Skip</button></div>`;
+      bar.addEventListener('click', ev => { const b = ev.target.closest('[data-rb]'); if (!b) return; Ding.unlock(); const a = b.dataset.rb; if (a === 'skip') this.skip(); else this.adjust(+a); });
+      document.body.appendChild(bar);
+    }
+    const q = sel => bar.querySelector(sel);
+    if (s.mode === 'done') {
+      bar.className = 'rb-done';
+      q('.rb-time').textContent = 'Exercise done ✓'; q('.rb-label').textContent = s.label; q('.rb-icon').textContent = '🏁';
+      q('.rb-prog').style.strokeDashoffset = 0; q('[data-rb="skip"]').textContent = 'Close';
+      return;
+    }
+    const rem = Math.max(0, s.endAt - Date.now()), secs = Math.ceil(rem / 1000);
+    const cls = s.ended ? 'rb-go' : secs <= 3 ? 'rb-red' : secs <= 10 ? 'rb-amber' : 'rb-run';
+    bar.className = cls;
+    q('.rb-time').textContent = s.ended ? 'GO · next set' : `${Math.floor(secs / 60)}:${pad(secs % 60)}`;
+    q('.rb-label').textContent = s.ended ? `Set ${s.set + 1} of ${s.of} · ${s.name}` : `Set ${s.set}/${s.of} done · ${s.name}`;
+    q('.rb-icon').textContent = s.ended ? '💥' : '';
+    q('.rb-prog').style.strokeDashoffset = s.ended ? 0 : (100 * (1 - rem / Math.max(1, s.total))).toFixed(2);
+    q('[data-rb="skip"]').textContent = s.ended ? 'Close' : 'Skip';
+  }
+};
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') Rest.tick(); });
+window.addEventListener('focus', () => Rest.tick());
+window.addEventListener('pageshow', () => Rest.tick());
 
 /* ---------- Labs: MyChart (Epic SMART on FHIR) import ---------- */
 const MC = () => window.MyChart || null;
@@ -1917,6 +2100,7 @@ window.addEventListener('online', () => { Sync.retryPending(); Coach.check(); })
 Sync.retryPending();
 Coach.check();
 if (!mcParam) maybeAutoSyncLabs();
+if (Rest.st) { Rest.loop(); Rest.tick(); }
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   // When a new version's service worker takes over, reload once so the new code runs.
   const hadController = !!navigator.serviceWorker.controller;

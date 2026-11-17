@@ -57,7 +57,7 @@ It never deletes logged workouts or exercise IDs. If an exercise is dropped from
 | `name` | string ≤60 | one of id/name | Matched case-insensitively against the user's exercises in that group. If there's no match, a new exercise is created. |
 | `sets` | int 1–20 | yes | Target sets. |
 | `reps` | `[min, max]` ints 1–100 | yes | Target rep range (`[8, 8]` for a fixed number). |
-| `rest` | int seconds 0–900 | recommended | Shown as the rest time next to the target. |
+| `rest` | int seconds 0–900 | optional (recommended) | Rest between sets. Shown next to the target **and drives the in-app rest timer** (app 7.1+), which starts when he commits a set and dings at 10 s left and at 0. `0` = no timer for that exercise (e.g. supersets). If omitted, the app uses its default: Bulk 165 s compound / 90 s isolation, Cut 75 s compound / 60 s isolation (compound = name matches squat, deadlift, bench, press, row, pull-up, chin-up, dip, thrust, lunge, rack pull, good morning, clean, snatch). His own Settings › Rest length override, if set, beats the plan. |
 | `notes` | string ≤400 | no | Coach cue shown on the logging screen for that exercise in that phase and focus. |
 
 When the app applies a plan, its targets **replace** any manual edits the user made to that phase · group · focus. Leave a combo out of the file to keep his version.
@@ -102,3 +102,7 @@ By default, each `back` focus ends with 1–2 biceps exercises and each `chest` 
 - The Food screen shows the targets for **his current phase** as "🧠 Coach targets". If he sets his own targets in the app, his take priority until he taps "Use coach targets".
 - When a plan with `nutrition` is applied, it **replaces** the stored coach targets: a phase you leave out has no coach targets. If you don't change nutrition, leave the key out entirely, or copy the previous values.
 - A change to the targets shows in the update banner.
+
+## Additions in app 7.1 (rest timer)
+- `rest` (per exercise, seconds) is optional. It now also sets the length of the rest countdown on the logging screen. Omit it to get the phase/type default listed above. Use `0` for exercises that should not start a timer.
+- No new top-level keys. Existing plans keep working unchanged.
