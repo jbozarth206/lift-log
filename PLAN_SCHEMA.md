@@ -8,6 +8,8 @@ bypassing all caches. If `version` is **higher** than the last plan it applied, 
 2. Creates any exercise referenced by a `name` that the user doesn't have yet, and adds it to that group's **All** list.
 3. Shows a dismissible **"Coach updated your plan"** banner on the home screen, with `message` and a summary of the changes.
 
+After an **app update** (app 8.0.1+), the app also re-applies the *current* version once, so keys an older app didn't understand (e.g. `meals`/`daily` applied by a pre-8.0 app) get picked up. It does the same if the plan has `meals`/`daily` but the phone's copy is missing. That re-apply refreshes only the Coach-owned copies (`nutrition`, `prescriptions`, `meals`, `daily`) and leaves `phases` alone, so his manual target edits stay. You don't need to bump `version` to fix that case.
+
 It never deletes logged workouts or exercise IDs. If an exercise is dropped from a focus, its history stays in the Journal and Progress, and it stays under **All**.
 
 ## Shape

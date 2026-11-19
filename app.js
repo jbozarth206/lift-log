@@ -9,7 +9,7 @@ const GROUPS = [
   {id:'arms', name:'Arms', color:'#ffc145', icon:'<path d="M5 18c1-5 3-8 6-10l2-3 3 1-1 4c2 1 3 3 3 5 0 2-2 4-5 4H8" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>'}
 ];
 const ARM_HOSTS = ['back', 'chest']; // groups that get arm finishers (biceps on back, triceps on chest)
-const APP_VERSION = '8.0';
+const APP_VERSION = '8.0.1';
 const SEED_PLAN_VERSION = 1; // plan.json v1 == built-in defaults
 const PHASE_DAYS = 28;
 const PHASES = {
@@ -1608,10 +1608,17 @@ const Coach = {
   /** apply a plan object if newer; returns {applied, changes} */
   apply(plan){
     if (!plan || typeof plan !== 'object' || plan.schema !== 1 || !Number.isInteger(plan.version)) return {applied: false, error: 'invalid plan'};
-    if (plan.version <= (db.coach.planVersion || 0)) return {applied: false};
+    const pv = db.coach.planVersion || 0;
+    if (plan.version < pv) return {applied: false};
+    // Same version already applied: re-apply only if a different app version applied it (an older app may have skipped keys it
+    // didn't know, e.g. v7 ignoring meals/daily) or a coach-owned copy the plan has is missing. A re-apply skips `phases`
+    // (already applied; keeps any manual target edits) and refreshes only Coach-owned copies, so it is idempotent.
+    const reapply = plan.version === pv;
+    if (reapply && db.coach.appliedByAppVersion === APP_VERSION
+        && !(plan.meals !== undefined && !db.coach.meals) && !(plan.daily !== undefined && !db.coach.daily)) return {applied: false};
     const changes = [];
     let created = 0;
-    for (const ph of Object.keys(plan.phases || {})) {
+    for (const ph of reapply ? [] : Object.keys(plan.phases || {})) {
       if (!PHASES[ph]) continue;
       for (const gid of Object.keys(plan.phases[ph] || {})) {
         if (!groupOf(gid)) continue;
@@ -1718,6 +1725,13 @@ const Coach = {
         changes.unshift({where: 'Daily', diffs: [bits.join(' · ') || 'updated']});
       }
       if (d) db.coach.daily = d;
+    }
+    db.coach.appliedByAppVersion = APP_VERSION;
+    if (reapply) {
+      // only surface what this app newly picked up; never clear an existing banner
+      if (changes.length) db.coach.banner = {version: plan.version, message: plan.message || '', changes, at: new Date().toISOString()};
+      save();
+      return {applied: changes.length > 0, reapplied: true, changes, created};
     }
     db.coach.planVersion = plan.version;
     db.coach.planUpdatedAt = plan.updatedAt || null;
