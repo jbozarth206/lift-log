@@ -9,7 +9,7 @@ const GROUPS = [
   {id:'arms', name:'Arms', color:'#ffc145', icon:'<path d="M5 18c1-5 3-8 6-10l2-3 3 1-1 4c2 1 3 3 3 5 0 2-2 4-5 4H8" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>'}
 ];
 const ARM_HOSTS = ['back', 'chest']; // groups that get arm finishers (biceps on back, triceps on chest)
-const APP_VERSION = '7.2';
+const APP_VERSION = '7.3';
 const SEED_PLAN_VERSION = 1; // plan.json v1 == built-in defaults
 const PHASE_DAYS = 28;
 const PHASES = {
@@ -175,7 +175,7 @@ function stripArms(plan, d){
   return plan;
 }
 function freshDb(){
-  const d = {version: 9, exercises: {}, plans: {}, phase: null, coach: {planVersion: SEED_PLAN_VERSION, banner: null}, sessions: [], body: [], profile: {height: null}, peds: emptyPeds(), food: emptyFood(), labs: emptyLabs(), settings: normSettings()};
+  const d = {version: 10, exercises: {}, plans: {}, phase: null, coach: {planVersion: SEED_PLAN_VERSION, banner: null}, sessions: [], body: [], profile: {height: null}, peds: emptyPeds(), food: emptyFood(), labs: emptyLabs(), settings: normSettings()};
   for (const g of GROUPS) d.exercises[g.id] = [];
   for (const ph of Object.keys(PHASES)) { d.plans[ph] = {}; for (const g of ['arms', ...GROUPS.map(x => x.id).filter(x => x !== 'arms')]) d.plans[ph][g] = buildPlan(ph, g, d.exercises); }
   return d;
@@ -235,6 +235,10 @@ function migrate(d){
     // v9 (app 7.2): Coach set prescriptions arrive via plan.json (db.coach.prescriptions); no stored data changes
     d.version = 9;
   }
+  if (d.version < 10) {
+    // v10 (app 7.3): MyChart portal lab imports land in labs.results (source 'mychart-portal') + labs.portal; nothing to convert
+    d.version = 10;
+  }
   for (const ph of Object.keys(PHASES)) { d.plans[ph] = d.plans[ph] || {}; for (const g of GROUPS) if (!d.plans[ph][g.id]) d.plans[ph][g.id] = buildPlan(ph, g.id, d.exercises); }
   syncAll(d);
   return d;
@@ -245,7 +249,7 @@ function load(){
     if (raw) {
       const d = JSON.parse(raw);
       if (d && d.exercises && Array.isArray(d.sessions)) {
-        if (!d.version || d.version < 9) localStorage.setItem(STORE_KEY + '.backup-v' + (d.version || 1), raw); // safety copy before upgrading
+        if (!d.version || d.version < 10) localStorage.setItem(STORE_KEY + '.backup-v' + (d.version || 1), raw); // safety copy before upgrading
         return migrate(d);
       }
     }
@@ -1824,6 +1828,7 @@ function bindCoachSettings(){
     const ok = await Sync.push(true);
     if (!ok && !navigator.onLine) return;
     render();
+    if (ok) { portalCheckedAt = 0; checkPortalLabs(false); }
   };
   $('#planCheck').onclick = () => Coach.check(true);
 }
@@ -2021,7 +2026,8 @@ async function syncLabs(manual){
     const parsed = observations.flatMap(o => P.parseObservation(o, reportOf));
     const m = P.mergeResults(db.labs.results, parsed);
     const c = mc.conn;
-    db.labs.results = m.results;
+    // a FHIR copy replaces the same result from a portal import
+    db.labs.results = m.results.filter(r => !isPortal(r) || !m.results.some(x => !isPortal(x) && sameLab(x, r)));
     db.labs.reports = Object.assign(db.labs.reports || {}, info);
     db.labs.source = {system: 'epic-mychart', name: c.name, endpointId: c.endpointId, env: c.env, fhirBase: c.fhirBase};
     if (!db.labs.connectedAt) db.labs.connectedAt = c.connectedAt || new Date().toISOString();
@@ -2051,6 +2057,80 @@ function maybeAutoSyncLabs(){
   const mc = MC(); if (!mc || mc.status() !== 'connected' || !navigator.onLine) return;
   const hrs = mc.config().autoSyncHours || 6, last = db.labs.lastSync ? new Date(db.labs.lastSync).getTime() : 0;
   if (Date.now() - last > hrs * 3600e3) syncLabs(false);
+}
+
+/* ---------- MyChart portal import (data/labs-import.json in the private lift-log-data repo, fetched with the Coach Sync token) ---------- */
+const PORTAL_PATH = 'data/labs-import.json', PORTAL_LABEL = 'MyChart (portal import)';
+let portalBusy = false, portalCheckedAt = 0;
+const isPortal = r => r && r.source === 'mychart-portal';
+const labVal = r => r.value != null ? String(r.value) : lc(r.text || '');
+/** same lab result: same date + value and same name, LOINC code, or known marker */
+const sameLab = (x, r) => x.date === r.date && labVal(x) === labVal(r) && (lc(x.name) === lc(r.name) || (!!x.code && x.code === r.code) || (markerKey(x) === markerKey(r) && !markerKey(r).startsWith('name:')));
+/** merge a labs-import.json object into db.labs if its `updated` is newer than the last one applied. Pure apart from db. */
+function applyPortalLabs(f){
+  if (!f || typeof f !== 'object' || !Array.isArray(f.results) || !f.updated || isNaN(Date.parse(f.updated))) return {applied: false, error: 'invalid'};
+  const prev = db.labs.portal && db.labs.portal.updated;
+  if (prev && Date.parse(f.updated) <= Date.parse(prev)) return {applied: false};
+  const num = x => x === null || x === undefined || x === '' || !Number.isFinite(+x) ? null : +x;
+  const str = (x, n) => x == null ? '' : String(x).slice(0, n);
+  const incoming = f.results.filter(r => r && typeof r === 'object' && /^\d{4}-\d\d-\d\d$/.test(r.date || '') && r.name).map(r => ({
+    id: str(r.id || `mcp-${r.date}-${lc(r.name)}`, 120), date: r.date, code: r.code ? str(r.code, 20) : null, name: str(r.name, 120),
+    value: num(r.value), unit: str(r.unit, 30), refLow: num(r.refLow), refHigh: num(r.refHigh),
+    flag: ['H', 'L', 'HH', 'LL', 'A'].includes(r.flag) ? r.flag : null, text: str(r.text, 300), reportId: r.reportId ? str(r.reportId, 120) : null, source: 'mychart-portal'}));
+  const same = sameLab;
+  const list = db.labs.results.slice();
+  let added = 0, updated = 0;
+  for (const r of incoming) {
+    let i = list.findIndex(x => x.id === r.id);
+    if (i < 0) i = list.findIndex(x => same(x, r)); // de-dupe by date + name (or marker) + value, incl. FHIR imports
+    if (i < 0) { list.push(r); added++; }
+    else if (isPortal(list[i]) && JSON.stringify(list[i]) !== JSON.stringify(r)) { list[i] = r; updated++; } // a FHIR copy wins
+  }
+  list.sort((a, b) => b.date.localeCompare(a.date) || String(a.name).localeCompare(String(b.name)));
+  db.labs.results = list;
+  for (const p of Array.isArray(f.reports) ? f.reports : []) {
+    if (!p || !p.id) continue;
+    db.labs.reports[str(p.id, 120)] = {name: str(p.name || 'Lab report', 120), date: /^\d{4}-\d\d-\d\d$/.test(p.date || '') ? p.date : null,
+      orderedBy: str(p.orderedBy, 80), note: str(p.note, 1000), source: 'mychart-portal'};
+  }
+  db.labs.portal = {updated: f.updated, importedAt: new Date().toISOString(), count: incoming.length, added,
+    available: (Array.isArray(f.available) ? f.available : []).filter(a => a && a.name).slice(0, 300).map(a => ({name: str(a.name, 120), date: /^\d{4}-\d\d-\d\d$/.test(a.date || '') ? a.date : null, imported: !!a.imported}))};
+  return {applied: true, added, updated};
+}
+/** fetch data/labs-import.json from lift-log-data (needs Coach Sync). Silent unless manual. */
+async function checkPortalLabs(manual){
+  if (!Sync.enabled || portalBusy || !navigator.onLine) { if (manual && !Sync.enabled) toast('Turn on Coach Sync first'); return false; }
+  if (!manual && Date.now() - portalCheckedAt < 10 * 60e3) return false;
+  portalBusy = true; portalCheckedAt = Date.now();
+  if (manual && tab === 'track' && trackMode === 'labs') render();
+  try {
+    const res = await fetch(`https://api.github.com/repos/${Sync.owner}/${Sync.repo}/contents/${PORTAL_PATH}?t=${Date.now()}`,
+      {headers: {...Sync.headers(), 'Accept': 'application/vnd.github.raw+json'}, cache: 'no-store'});
+    if (res.status === 404) { if (manual) toast('No lab import waiting'); return false; }
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const r = applyPortalLabs(await res.json());
+    if (r.applied) { save(); toast(r.added ? `✓ ${r.added} lab result${r.added > 1 ? 's' : ''} imported from MyChart` : '✓ MyChart import updated'); }
+    else if (manual) toast(r.error ? 'Lab import file is invalid' : 'Labs up to date');
+    return !!r.applied;
+  } catch (e) {
+    if (manual) toast('Could not fetch the lab import');
+    return false;
+  } finally {
+    portalBusy = false;
+    if (tab === 'track' && trackMode === 'labs') render();
+  }
+}
+function portalHtml(){
+  const P = db.labs.portal;
+  if (!P && !Sync.enabled) return '';
+  const btn = Sync.enabled ? `<div class="btn-row"><button class="btn small" id="portalCheck" ${portalBusy ? 'disabled' : ''}>${portalBusy ? 'Checking…' : '⟳ Check for new import'}</button></div>` : '';
+  if (!P) return `<div class="card mc-card portal-card"><div class="mc-head"><span class="mc-dot"></span><div class="grow"><b>${PORTAL_LABEL}</b>
+    <div class="sub">No portal import yet. Results pulled from the MyChart website arrive here through Coach Sync.</div></div></div>${btn}</div>`;
+  const nr = P.available.filter(a => !a.imported);
+  return `<div class="card mc-card ok portal-card"><div class="mc-head"><span class="mc-dot ok"></span><div class="grow"><b>${PORTAL_LABEL}</b>
+    <div class="sub">${P.count} results · pulled ${fmtDay(new Date(P.updated).toLocaleDateString('en-CA'), true)} · imported ${timeAgo(P.importedAt)}${Sync.enabled ? '' : ' · Coach Sync off'}</div></div></div>${btn}
+    ${nr.length ? `<details class="portal-avail"><summary>${nr.length} more results in MyChart, not imported yet</summary>
+      ${[...new Set(nr.map(a => a.date))].sort().reverse().map(d => `<div class="pa-day"><b>${d ? fmtDay(d, true) : 'Undated'}</b> ${nr.filter(a => a.date === d).map(a => esc(a.name)).join(' · ')}</div>`).join('')}</details>` : ''}</div>`;
 }
 function labsConnHtml(){
   const s = labsState(), L = db.labs;
@@ -2097,18 +2177,26 @@ function renderLabs(el){
     const items = rs.filter(r => r.date === date).sort((a, b) => panelOf(a).localeCompare(panelOf(b)) || String(a.name).localeCompare(String(b.name)));
     const panels = [...new Set(items.map(r => r.reportId && L.reports[r.reportId] ? L.reports[r.reportId].name : null).filter(Boolean))];
     const flagged = items.filter(r => r.flag).length;
-    return `<div class="section-title draw-title">${fmtDay(date, true)} ${flagged ? `<span class="st-sub">${flagged} flagged</span>` : ''}${panels.length ? `<div class="draw-panels">${panels.map(esc).join(' · ')}</div>` : ''}</div>
+    const srcs = [...new Set(items.map(r => isPortal(r) ? PORTAL_LABEL : 'MyChart (FHIR)'))];
+    const reps = [...new Set(items.map(r => r.reportId).filter(id => id && L.reports[id]))].map(id => L.reports[id]);
+    const orderedBy = [...new Set(reps.map(p => p.orderedBy).filter(Boolean))];
+    const notes = [...new Set(reps.map(p => p.note).filter(Boolean))];
+    return `<div class="section-title draw-title">${fmtDay(date, true)} ${flagged ? `<span class="st-sub">${flagged} flagged</span>` : ''}${panels.length ? `<div class="draw-panels">${panels.map(esc).join(' · ')}</div>` : ''}
+      <div class="draw-src">${srcs.map(esc).join(' + ')}${orderedBy.length ? ' · ordered by ' + orderedBy.map(esc).join(', ') : ''}</div></div>
+      ${notes.map(n => `<div class="lab-note">📝 ${esc(n)}</div>`).join('')}
       <div class="list">${items.map(r => `<button class="row lab-res" data-marker="${esc(markerKey(r))}"><div class="main"><div class="name">${esc(r.name)}</div>
         <div class="meta">${refStr(r) ? 'ref ' + esc(refStr(r)) : 'no range'}${r.status ? ' · ' + esc(r.status) : ''}</div></div>
         <div class="lab-v ${r.flag ? 'flagged' : ''}">${valStr(r)}<small> ${esc(r.unit)}</small> ${flagPill(r.flag)}</div></button>`).join('')}</div>`;
   }).join('');
-  el.innerHTML = `${labsConnHtml()}
+  const ls = labsState(), hideFhir = L.portal && ls.st !== 'unavailable' && !ls.conn && !ls.configured.length; // FHIR not set up yet: don't nag when the portal import works
+  el.innerHTML = `${portalHtml()}${hideFhir ? '' : labsConnHtml()}
     ${keys.length ? `<div class="section-title">Key markers</div><div class="lab-tiles">${tiles}</div>` : ''}
     ${rs.length ? draws : `<p class="note">No lab results yet. Once MyChart is connected, results import here grouped by draw date, with H/L flags and a trend chart for each marker.</p>`}
-    <p class="note">Imported from MyChart (read-only) · ${rs.length} results. Manual bloodwork notes stay in Protocol › Health notes. Not medical advice.</p>`;
+    <p class="note">Imported from MyChart (read-only${rs.some(isPortal) ? `; ${rs.filter(isPortal).length} via portal import` : ''}) · ${rs.length} results. Manual bloodwork notes stay in Protocol › Health notes. Not medical advice.</p>`;
   if ($('#labConnect')) $('#labConnect').onclick = () => connectLabs($('#labEp') ? $('#labEp').value : (labsState().configured[0] || {}).id);
   if ($('#labReconnect')) $('#labReconnect').onclick = reconnectLabs;
   if ($('#labSync')) $('#labSync').onclick = () => syncLabs(true);
+  if ($('#portalCheck')) $('#portalCheck').onclick = () => checkPortalLabs(true);
   if ($('#labOff')) $('#labOff').onclick = () => {
     if (!confirm('Disconnect MyChart? This deletes the sign-in from this phone. Imported results stay.')) return;
     const delAll = rs.length && confirm(`Also delete the ${rs.length} imported lab results from Lift Log?`);
@@ -2129,7 +2217,7 @@ function renderMarker(el, v){
     ${num.length ? `<div class="card chart-card">${labChart(num, lo ? lo.refLow : null, hi ? hi.refHigh : null)}</div>` : ''}
     <div class="section-title">History</div>
     <div class="list">${[...ser].reverse().map(r => `<div class="row"><div class="main"><div class="name">${fmtDay(r.date, true)}</div>
-      <div class="meta">${esc(r.name)}${refStr(r) ? ' · ref ' + esc(refStr(r)) : ''}${r.reportId && db.labs.reports[r.reportId] ? ' · ' + esc(db.labs.reports[r.reportId].name) : ''}</div></div>
+      <div class="meta">${esc(r.name)}${refStr(r) ? ' · ref ' + esc(refStr(r)) : ''}${r.reportId && db.labs.reports[r.reportId] ? ' · ' + esc(db.labs.reports[r.reportId].name) : ''}${isPortal(r) ? ' · ' + PORTAL_LABEL : ''}</div></div>
       <div class="lab-v ${r.flag ? 'flagged' : ''}">${valStr(r)}<small> ${esc(r.unit)}</small> ${flagPill(r.flag)}</div></div>`).join('')}</div>`;
 }
 /** trend chart with shaded reference band */
@@ -2177,11 +2265,12 @@ if (mcParam) {
   if (mcParam === 'connected' && MC() && MC().conn) { db.labs.connectedAt = MC().conn.connectedAt; save(); setTimeout(() => syncLabs(true), 0); }
 }
 render();
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { checkPhase(); Sync.retryPending(); Coach.check(); maybeAutoSyncLabs(); } });
-window.addEventListener('online', () => { Sync.retryPending(); Coach.check(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { checkPhase(); Sync.retryPending(); Coach.check(); maybeAutoSyncLabs(); checkPortalLabs(false); } });
+window.addEventListener('online', () => { Sync.retryPending(); Coach.check(); checkPortalLabs(false); });
 Sync.retryPending();
 Coach.check();
 if (!mcParam) maybeAutoSyncLabs();
+checkPortalLabs(false);
 if (Rest.st) { Rest.loop(); Rest.tick(); }
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   // When a new version's service worker takes over, reload once so the new code runs.
