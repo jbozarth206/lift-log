@@ -22,9 +22,9 @@ gh api 'repos/jbozarth206/lift-log-data/commits?path=data/liftlog.json&per_page=
 ### Data format (same as the app's backup export)
 ```jsonc
 {
-  "app": "liftlog", "appVersion": "7.2",
+  "app": "liftlog", "appVersion": "8.0",
   "exportedAt": "2026-11-11T18:40:00.000Z",      // when the phone pushed it
-  "version": 9,                                   // data schema version
+  "version": 11,                                  // data schema version
   "phase": {"id": "bulk", "start": "2026-11-11"}, // current 4-week block (bulk|cut), null if not chosen yet
   "exercises": { "back": [{"id": "mhx2k1abcde", "name": "Lat Pulldown"}], "chest": [], "legs": [], "shoulders": [], "arms": [] },
   "plans": { "bulk": { "back": { "upper": [{"exId": "mhx2k1abcde", "sets": 4, "min": 6, "max": 8, "rest": 150, "notes": "…"}], "mid": [], "lower": [], "all": [] } }, "cut": {} },
@@ -127,6 +127,29 @@ gh api 'repos/jbozarth206/lift-log-data/commits?path=data/liftlog.json&per_page=
 - **Settings** (top-level `settings`, v8 / app 7.1+; treat a missing key as defaults): `{"restTimer": true, "restSound": true, "restVolume": 0.8, "restOverride": null}`. `restOverride` is seconds (15–900) or `null`. When set, he has chosen one rest length for **every** exercise, and it beats your plan `rest`. Mention it if your rest prescriptions matter. The other keys are device preferences you can ignore.
 - **Rest timer & plan `rest`**: each plan item's `rest` (seconds) drives the rest countdown on his logging screen (it dings at 10 s left and at 0). Omitted `rest` falls back to Bulk 165 s compound / 90 s isolation, Cut 75 s / 60 s. `0` = no timer. Timer runs aren't logged, so you can't see actual rest taken.
 - **Profile**: `profile.height` is in **inches** (e.g. 70 = 5′10″), or `null` if not set. BMI = `703 × weight / height²`.
+- **Meal-plan logging (app 8.0+)**: food entries logged from your meal plan carry `plan`:
+  ```jsonc
+  {"id": "…", "date": "2026-11-19", "meal": "breakfast", "name": "Oats", "qty": "100 g", "kcal": 420, "p": 13, "c": 67, "f": 7,
+   "plan": {"meal": "breakfast", "food": 1, "swap": null, "group": "…", "status": "edited",            // "as-planned" | "edited"
+            "orig": {"name": "Oats", "qty": "100 g", "kcal": 380, "p": 13, "c": 67, "f": 7}}}          // what you prescribed
+  ```
+  `meal` is your meal `id`, `food` the index in that meal's foods (or in `swaps[swap].foods` when `swap` is a number). Entries without `plan` are off-plan foods he added himself.
+  **`food.adherence`** has one summary per day he logged against the plan (recomputed whenever he logs, edits or deletes food that day):
+  ```jsonc
+  "adherence": {"2026-11-19": {"phase": "bulk", "planned": {"kcal": 3950, "p": 250, "c": 480, "f": 110}, "actual": {"kcal": 3610, "p": 236, "c": 431, "f": 104},
+    "meals": {"breakfast": "edited", "lunch": "as-planned", "preworkout": "partial", "dinner": "swapped", "late": "missed"},
+    "asPlanned": 1, "swapped": 1, "partial": 1, "edited": 1, "missed": 1, "offPlan": 2, "kcalPct": 91, "proteinPct": 94, "updated": "…"}}
+  ```
+  `missed` on today's date may just mean "not eaten yet". Judge finished days.
+- **Daily checklist** (top-level `habits`, app 8.0+; missing = `{}`): one object per local date he touched.
+  ```jsonc
+  "habits": {"2026-11-19": {"cardio": {"walk": {"done": true, "minutes": 25}}, "supps": {"vitd": true, "fishoil": false},
+    "steps": 10500, "water": 96, "sleep": 7.5,                          // steps, fl oz, hours (entered by hand); null = not logged
+    "plan": {"cardio": [{"id": "walk", "type": "Incline walk", "minutes": 25}], "steps": 10000, "waterOz": 128, "sleepHours": 8, "supps": ["vitd", "fishoil", "creatine"]},
+    "done": 4, "total": 7, "updated": "…"}}
+  ```
+  `plan` is a snapshot of your `daily` targets due that day (cardio only on its `days`), so adherence stays readable after you change the plan. An item is done when ticked, or when steps/water/sleep reach the target. Days with no entry = he didn't open the checklist (not necessarily missed).
+- **Progress photos** (top-level `photos`, app 8.0+; missing = `[]`): index only. `[{"date": "2026-11-19", "pose": "front"|"side"|"back", "path": "photos/2026-11-19-front.jpg", "sha": "…", "w": 810, "h": 1080, "bytes": 182344, "at": "…"}]`. The JPEGs (longest side 1080 px) are in the private repo under `photos/`. You may view them there to judge visual progress. **Never copy, re-host, describe identifiably, or put them (or links to them) in `lift-log`, `plan.json`, messages to third parties or anywhere public.**
 - If `coach.planVersion` is lower than `plan.json`'s `version`, his phone hasn't opened the app since your last publish.
 
 ## 2. Publish a new plan
@@ -150,7 +173,7 @@ Tips:
 - Base progression on his recent top sets and estimated 1RM (Epley: `w × (1 + r/30)`).
 
 ## 2b. Set prescriptions: what he should lift next time (app 7.2+)
-On the logging screen the app shows **🧠 Coach target**, your weight × reps for every set, and pre-fills the inputs with it. Last time only appears as a small "Last: …" line. If an exercise has no current prescription, he sees an **⚙️ Auto** target instead: +5 lb (upper body) or +10 lb (lower body) if he hit the top of the rep range on every set, otherwise the same weight and +1 rep. So **at every review (e.g. Mon/Wed/Fri), publish `prescriptions` for every exercise in his upcoming sessions.** Schema and validation rules are in PLAN_SCHEMA.md › "Additions in app 7.2".
+On the logging screen the app shows **🧠 Coach target**, your weight × reps for every set, and pre-fills the inputs with it. Last time only appears as a small "Last: …" line. If an exercise has no current prescription, he sees an **⚙️ Auto** target instead: +5 lb (upper body) or +10 lb (lower body) if he hit the top of the rep range on every set, otherwise the same weight and +1 rep. So **at every review (each weekday, Mon–Fri), publish `prescriptions` for every exercise in his upcoming sessions.** Schema and validation rules are in PLAN_SCHEMA.md › "Additions in app 7.2".
 
 How to compute them from the synced history:
 1. Work out which sessions come next (his rotation and current phase from `phase` and recent `sessions`), and the exercises in each one from `plans.<phase>.<group>.<focus>` (ids are there).
@@ -165,18 +188,26 @@ How to compute them from the synced history:
 5. `prescriptions` **replaces** the whole stored set each time. Include every exercise you want a Coach target on, not only the changed ones. Leave the key out entirely to keep the previous set.
 6. Bump `version` (the app ignores the file otherwise), validate with `python3 tools/validate_plan.py --data liftlog.json` (it checks every key matches an exercise id), and push.
 
-## 3. Review cadence: 3× per week
+## 2c. Meal plan and daily checklist (app 8.0+)
+Schemas are in PLAN_SCHEMA.md › "Additions in app 8.0".
+- **`meals`**: per-phase daily template. Build it from his `nutrition` targets: the meal totals should land within about ±5% of `kcal` and `p`. Give every meal a stable `id` (adherence is keyed by it) and a `slot` (breakfast/lunch/dinner/snack = where it lands in his food log). Use foods he actually logs (check `food.entries`/`food.favorites`), realistic quantities, and 1–2 `swaps` for meals he skips or edits often. Keep `groceries` to a short weekly list. Each food needs `kcal`/`p`/`c`/`f`; the app sums meals and the day for him.
+- Use `food.adherence` to adjust: meals that are often `missed` or `edited` need a different food, size or time, not a lecture. Compare `actual` with `planned` and the weight trend before changing calories.
+- **`daily`**: `cardio` sessions (type, minutes, `days` 0=Sun…6=Sat, HR `zone`, notes, optional `phase`), `targets` (`steps`, `waterOz`, `sleepHours`), `supplements` (name, dose, time) and `photoDay` (weekday for the photo check-in). Keep it short; 5–8 daily items is plenty. Review `habits` for done/total by day and adjust targets he consistently misses.
+- **Privacy:** plan.json is public. Supplements are fine as a generic checklist (e.g. "Vitamin D3 5,000 IU", "Fish oil"). Never mention PEDs/compounds/doses, lab values or markers, diagnoses, providers or why a supplement was prescribed. `validate_plan.py` rejects these. Put anything health-related in your private message to him instead.
 
-Coach reviews his data **three times a week** (e.g. Mon/Wed/Fri, spaced about 2–3 days apart). Each review:
+## 3. Review cadence: every weekday (Mon–Fri)
+
+Coach reviews his data **every weekday, Monday to Friday**. Weekend data is covered by Monday's review. Each review:
 1. Pull `data/liftlog.json`. Check `exportedAt` and the last commit date. If nothing new has synced since the last review, say so and change nothing.
 2. Look at the sessions since the last review: top sets, estimated 1RM, rep targets hit or missed, and arm finishers. Look at the body-weight 7-day average trend against the phase goal, daily food totals against targets (logged days only), the protocol log (doses logged vs planned, any health notes), and any **new lab results** in `labs.results` since the last review (compare each marker with its previous value and the lab's range, and list flagged ones). Report protocol and lab data neutrally.
-3. **Every review:** refresh `prescriptions` for every exercise in his upcoming sessions (section 2b), bump `version`, validate, and push. This is how he sees what to lift next.
+   Also look at `food.adherence`, `habits` (cardio, steps, water, sleep, supplements) and, weekly, new `photos` check-ins.
+3. **Every review:** refresh `prescriptions` for every exercise in his upcoming sessions (section 2b). Adjust `meals` and `daily` when the data calls for it (section 2c). Bump `version`, validate, and push. This is how he sees what to lift and eat next. If nothing synced since the last review, change nothing.
 4. If adjustments are warranted, also edit the rest of `plan.json` (exercises, sets/reps/rest, `notes`, `nutrition`) and write a short `message` summarizing the why. Small, specific changes beat full rewrites. Leave out combos you aren't changing.
 
 ## 4. Rules
-1. **Never write to `lift-log-data`.** That includes `body`, `profile`, `peds`, `food` and `labs`: read them, never edit them. Don't edit, delete, force-push or rewrite history there. It's his only cloud copy, and the app overwrites it.
+1. **Never write to `lift-log-data`.** That includes `body`, `profile`, `peds`, `food`, `labs`, `habits`, `photos` and the `photos/` folder: read them, never edit them. Don't edit, delete, force-push or rewrite history there. It's his only cloud copy, and the app overwrites it.
 2. In `lift-log`, change **only `plan.json`** (and these docs if asked). Don't touch app code (`app.js`, `sw.js`, `index.html`, …) unless the user asks.
 3. **Always run `tools/validate_plan.py`** and push only if it prints `OK`. Every published change needs a version bump.
-4. Never put tokens, passwords or personal data in `plan.json`. It's public.
+4. Never put tokens, passwords or personal data in `plan.json`. It's public: **no PED, lab, diagnosis, provider or photo data** in plan.json, its `message`, notes, or anywhere in the public `lift-log` repo. The validator's PRIVACY errors are hard stops.
 5. Don't remove exercises just because their history looks bad. Removing an exercise from a focus doesn't delete history, but explain big changes in `message`.
 6. Never force-push `main`.

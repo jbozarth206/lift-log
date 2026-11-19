@@ -9,7 +9,7 @@ const GROUPS = [
   {id:'arms', name:'Arms', color:'#ffc145', icon:'<path d="M5 18c1-5 3-8 6-10l2-3 3 1-1 4c2 1 3 3 3 5 0 2-2 4-5 4H8" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>'}
 ];
 const ARM_HOSTS = ['back', 'chest']; // groups that get arm finishers (biceps on back, triceps on chest)
-const APP_VERSION = '7.3';
+const APP_VERSION = '8.0';
 const SEED_PLAN_VERSION = 1; // plan.json v1 == built-in defaults
 const PHASE_DAYS = 28;
 const PHASES = {
@@ -166,6 +166,7 @@ function normFood(f){
   for (const k of ['entries', 'favorites']) if (!Array.isArray(f[k])) f[k] = [];
   f.targets = Object.assign({kcal: null, p: null, c: null, f: null}, f.targets || {});
   if (!['coach', 'manual'].includes(f.targetsSource)) f.targetsSource = 'coach';
+  if (!f.adherence || typeof f.adherence !== 'object' || Array.isArray(f.adherence)) f.adherence = {};
   return f;
 }
 /** drop arm-finisher items (Arms-pool ids) from a built back/chest plan */
@@ -175,7 +176,7 @@ function stripArms(plan, d){
   return plan;
 }
 function freshDb(){
-  const d = {version: 10, exercises: {}, plans: {}, phase: null, coach: {planVersion: SEED_PLAN_VERSION, banner: null}, sessions: [], body: [], profile: {height: null}, peds: emptyPeds(), food: emptyFood(), labs: emptyLabs(), settings: normSettings()};
+  const d = {version: 11, habits: {}, photos: [], exercises: {}, plans: {}, phase: null, coach: {planVersion: SEED_PLAN_VERSION, banner: null}, sessions: [], body: [], profile: {height: null}, peds: emptyPeds(), food: emptyFood(), labs: emptyLabs(), settings: normSettings()};
   for (const g of GROUPS) d.exercises[g.id] = [];
   for (const ph of Object.keys(PHASES)) { d.plans[ph] = {}; for (const g of ['arms', ...GROUPS.map(x => x.id).filter(x => x !== 'arms')]) d.plans[ph][g] = buildPlan(ph, g, d.exercises); }
   return d;
@@ -239,6 +240,12 @@ function migrate(d){
     // v10 (app 7.3): MyChart portal lab imports land in labs.results (source 'mychart-portal') + labs.portal; nothing to convert
     d.version = 10;
   }
+  if (d.version < 11) {
+    // v11 (app 8.0): daily checklist (habits by date), progress-photo index (images live in the private repo), meal-plan adherence (food.adherence)
+    d.version = 11;
+  }
+  if (!d.habits || typeof d.habits !== 'object' || Array.isArray(d.habits)) d.habits = {};
+  if (!Array.isArray(d.photos)) d.photos = [];
   for (const ph of Object.keys(PHASES)) { d.plans[ph] = d.plans[ph] || {}; for (const g of GROUPS) if (!d.plans[ph][g.id]) d.plans[ph][g.id] = buildPlan(ph, g.id, d.exercises); }
   syncAll(d);
   return d;
@@ -249,7 +256,7 @@ function load(){
     if (raw) {
       const d = JSON.parse(raw);
       if (d && d.exercises && Array.isArray(d.sessions)) {
-        if (!d.version || d.version < 10) localStorage.setItem(STORE_KEY + '.backup-v' + (d.version || 1), raw); // safety copy before upgrading
+        if (!d.version || d.version < 11) localStorage.setItem(STORE_KEY + '.backup-v' + (d.version || 1), raw); // safety copy before upgrading
         return migrate(d);
       }
     }
@@ -360,7 +367,7 @@ function render(){
   const v = cur(), el = $('#view');
   el.className = 'fade-in'; void el.offsetWidth;
   ({phase: renderPhase, home: renderHome, focus: renderFocus, group: renderGroup, log: renderLog, journal: renderJournal, session: renderSession,
-    progress: renderProgress, track: renderTrack, marker: renderMarker, settings: renderSettings})[v.v](el, v);
+    progress: renderProgress, track: renderTrack, marker: renderMarker, photos: renderPhotos, settings: renderSettings})[v.v](el, v);
 }
 
 /* ---------- Workout: Home ---------- */
@@ -375,12 +382,14 @@ function renderHome(el){
   const ph = PHASES[curPhase()];
   el.innerHTML = `
     ${coachBannerHtml()}
+    ${photoBannerHtml()}
     <button class="phase-chip" id="phaseChip" style="--c:${ph.color}"><span class="pc-ico">${ph.icon}</span><span class="pc-main"><b>${phaseLabel()}</b><span>${db.phase ? ph.tagline + ' · ' + Math.max(0, PHASE_DAYS - phaseDays()) + ' days left' : ''}</span></span><span class="pc-chg">Change</span></button>
     <div class="hero">
       <div class="stat"><div class="v">${new Set(thisWeek.map(s => s.date)).size}</div><div class="l">Days this week</div></div>
       <div class="stat"><div class="v">${vol >= 10000 ? fmtNum(vol/1000) + 'k' : fmtNum(vol)}</div><div class="l">Lbs lifted (7d)</div></div>
       <div class="stat"><div class="v">${days}</div><div class="l">Total days</div></div>
     </div>
+    ${todayCardHtml()}
     <div class="section-title">What are we training?</div>
     <div class="group-grid">
       ${GROUPS.map(g => {
@@ -393,7 +402,7 @@ function renderHome(el){
     </div>`;
   el.querySelectorAll('.group-card').forEach(b => b.addEventListener('click', () => push({v:'focus', g: b.dataset.g, date: todayStr()})));
   $('#phaseChip').onclick = () => push({v:'phase'});
-  bindCoachBanner();
+  bindCoachBanner(); bindPhotoBanner(); bindTodayCard();
 }
 
 /* ---------- Workout: Focus picker ---------- */
@@ -1020,7 +1029,7 @@ function renderSettings(el){
   $('#wipe').onclick = () => {
     if (!confirm('Erase ALL workouts and exercises? This cannot be undone.')) return;
     if (!confirm('Really erase everything? Export a backup first if unsure.')) return;
-    db = freshDb(); if (window.MyChart) MyChart.disconnect(); save(); stacks.workout = [{v:'phase'}]; switchTab('workout'); toast('All data erased');
+    db = freshDb(); if (window.MyChart) MyChart.disconnect(); localStorage.removeItem('liftlog.thumbs'); save(); stacks.workout = [{v:'phase'}]; switchTab('workout'); toast('All data erased');
   };
 }
 function exportPayload(){
@@ -1050,7 +1059,8 @@ function importData(ev){
       db = migrate({version: d.version || 1, exercises: d.exercises, plans: d.plans, phase: d.phase === undefined ? db.phase : d.phase, coach: d.coach || db.coach, sessions: d.sessions,
         body: Array.isArray(d.body) ? d.body : db.body, profile: d.profile || db.profile,
         peds: d.peds && typeof d.peds === 'object' ? d.peds : db.peds, food: d.food && typeof d.food === 'object' ? d.food : db.food,
-        labs: d.labs && typeof d.labs === 'object' && !Array.isArray(d.labs) ? d.labs : db.labs, settings: d.settings || db.settings});
+        labs: d.labs && typeof d.labs === 'object' && !Array.isArray(d.labs) ? d.labs : db.labs, settings: d.settings || db.settings,
+        habits: d.habits && typeof d.habits === 'object' ? d.habits : db.habits, photos: Array.isArray(d.photos) ? d.photos : db.photos});
       save(); render(); toast('Backup restored');
     } catch (e) { toast('That file is not a Lift Log backup'); }
     ev.target.value = '';
@@ -1095,7 +1105,7 @@ function renderBody(el){
     </div>
     ${weekAgo && lastAvg ? `<p class="note" style="margin:0 6px 4px">7-day avg ${lastAvg - weekAgo.avg >= 0 ? '▲' : '▼'} ${fmtNum(Math.abs(Math.round((lastAvg - weekAgo.avg) * 10) / 10))} lb vs a week earlier</p>` : ''}
     <div class="btn-row"><button class="btn primary" id="addBody">＋ Log body weight</button></div>
-    <div class="btn-row"><button class="btn small" id="heightBtn">📏 Height: ${fmtHeight(db.profile.height)}</button>${series.length > 1 ? `<button class="btn small" id="trendBtn">📈 Weight trend</button>` : ''}</div>
+    <div class="btn-row"><button class="btn small" id="heightBtn">📏 Height: ${fmtHeight(db.profile.height)}</button><button class="btn small" id="photosBtn">📸 Photos</button>${series.length > 1 ? `<button class="btn small" id="trendBtn">📈 Weight trend</button>` : ''}</div>
     <div class="section-title">History</div>
     ${list.length ? `<div class="list">${list.map(e => `
       <button class="row body-row" data-id="${esc(e.id)}">
@@ -1105,6 +1115,7 @@ function renderBody(el){
         <svg class="chev" width="20" height="20" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
       </button>`).join('')}</div>` : `<div class="empty" style="padding:30px 10px"><div class="ico">⚖️</div><p>Log your weight (and optional measurements) to track your bulk or cut.</p></div>`}`;
   $('#addBody').onclick = () => bodySheet(null);
+  $('#photosBtn').onclick = () => push({v: 'photos'});
   $('#heightBtn').onclick = heightSheet;
   if ($('#trendBtn')) $('#trendBtn').onclick = () => { prog.mode = 'body'; switchTab('progress'); };
   el.querySelectorAll('.body-row').forEach(r => r.onclick = () => bodySheet(db.body.find(x => String(x.id) === r.dataset.id)));
@@ -1239,12 +1250,12 @@ function weightChart(pts){
 }
 
 /* ---------- Track hub: Body · Food · Protocol ---------- */
-const TRACK_MODES = [['body', '⚖️', 'Body'], ['food', '🍽️', 'Food'], ['protocol', '💉', 'Protocol'], ['labs', '🩸', 'Labs']];
+const TRACK_MODES = [['body', '⚖️', 'Body'], ['food', '🍽️', 'Food'], ['daily', '✅', 'Daily'], ['protocol', '💉', 'Protocol'], ['labs', '🩸', 'Labs']];
 let trackMode = localStorage.getItem('liftlog.trackMode') || 'body';
 if (!TRACK_MODES.some(m => m[0] === trackMode)) trackMode = 'body';
 function openTrack(mode){ trackMode = mode; localStorage.setItem('liftlog.trackMode', mode); stacks.track = [{v:'track'}]; switchTab('track'); }
 function renderTrack(el){
-  ({body: renderBody, food: renderFood, protocol: renderProtocol, labs: renderLabs})[trackMode](el);
+  ({body: renderBody, food: renderFood, daily: renderDaily, protocol: renderProtocol, labs: renderLabs})[trackMode](el);
   el.insertAdjacentHTML('afterbegin', `<div class="seg track-seg" id="trackSeg">${TRACK_MODES.map(([k, i, l]) => `<button data-m="${k}" class="${trackMode === k ? 'on' : ''}">${i} ${l}</button>`).join('')}</div>`);
   el.querySelectorAll('#trackSeg button').forEach(b => b.onclick = () => { trackMode = b.dataset.m; localStorage.setItem('liftlog.trackMode', trackMode); render(); window.scrollTo(0, 0); });
 }
@@ -1291,11 +1302,12 @@ function renderFood(el){
       <div class="ft-macros">${MACROS.map(([k, l, c]) => `<div><div class="ml"><b>${fmtNum(t[k])}</b>${T[k] ? `<span> / ${fmtNum(T[k])} g</span>` : ' g'}</div>${bar(t[k], T[k], c)}<div class="mn">${l}</div></div>`).join('')}</div>
       ${T.source !== 'none' ? `<div class="ft-src">${T.source === 'coach' ? '🧠 Coach targets · ' + PHASES[curPhase()].short : 'Your targets'} · <button class="linkish" id="editTargets">Edit</button></div>` : ''}
     </div>
+    ${mealPlanHtml()}
     ${MEALS.map(([m, label, ico]) => {
       const list = entries.filter(e => e.meal === m), mk = list.reduce((a, e) => a + kcalOf(e), 0);
       return `<div class="meal-head"><span>${ico} ${label}</span><span class="mk">${list.length ? fmtNum(mk) + ' kcal' : ''}</span><button class="mini-btn" data-addmeal="${m}">＋ Add</button></div>
         ${list.length ? `<div class="list">${list.map(e => `<button class="row food-row" data-id="${esc(e.id)}"><div class="main"><div class="name">${esc(e.name)}</div>
-          <div class="meta">${e.qty ? esc(e.qty) + ' · ' : ''}P ${fmtNum(e.p || 0)} · C ${fmtNum(e.c || 0)} · F ${fmtNum(e.f || 0)}</div></div><div class="kc">${fmtNum(kcalOf(e))}<small> kcal</small></div></button>`).join('')}</div>` : ''}`;
+          <div class="meta">${e.plan ? `<span class="plan-tag ${e.plan.status === 'edited' ? 'ed' : ''}">${e.plan.status === 'edited' ? '✎ edited' : '✓ as planned'}</span> ` : ''}${e.qty ? esc(e.qty) + ' · ' : ''}P ${fmtNum(e.p || 0)} · C ${fmtNum(e.c || 0)} · F ${fmtNum(e.f || 0)}</div></div><div class="kc">${fmtNum(kcalOf(e))}<small> kcal</small></div></button>`).join('')}</div>` : ''}`;
     }).join('')}
     <div class="btn-row" style="margin-top:16px"><button class="btn primary" id="addFood">＋ Add food</button></div>`;
   const go = d => { foodDate = d > todayStr() ? todayStr() : d; render(); };
@@ -1308,6 +1320,7 @@ function renderFood(el){
   el.querySelectorAll('.food-row').forEach(r => r.onclick = () => foodSheet(db.food.entries.find(e => String(e.id) === r.dataset.id)));
   if ($('#setTargets')) $('#setTargets').onclick = targetsSheet;
   if ($('#editTargets')) $('#editTargets').onclick = targetsSheet;
+  bindMealPlan(el);
 }
 function foodSheet(e, meal){
   const fav = db.food.favorites, rec = recentFoods().filter(r => !fav.some(f => lc(f.name) === lc(r.name)));
@@ -1346,14 +1359,15 @@ function foodSheet(e, meal){
     let kcal = numOrNull($('#fKcal').value, 10000);
     if (kcal == null) kcal = Math.round(4 * (p || 0) + 4 * (c || 0) + 9 * (f || 0));
     const item = {name, qty: $('#fQty').value.trim(), kcal, p: p || 0, c: c || 0, f: f || 0};
-    if (e) Object.assign(e, item, {meal: sel});
+    if (e) { Object.assign(e, item, {meal: sel}); if (e.plan) e.plan.status = sameFood(item, e.plan.orig || {}) ? 'as-planned' : 'edited'; }
     else db.food.entries.push({id: uid(), date: foodDate, meal: sel, ...item});
     const fi = fav.findIndex(x => lc(x.name) === lc(name));
     if ($('#fFav').checked) { if (fi >= 0) Object.assign(fav[fi], item); else fav.push({id: uid(), ...item}); }
     else if (fi >= 0) fav.splice(fi, 1);
+    recomputeAdherence(e ? e.date : foodDate);
     save(); closeSheet(); render(); toast(e ? 'Updated' : `✓ Added ${fmtNum(kcal)} kcal`);
   };
-  if ($('#fDel')) $('#fDel').onclick = () => { db.food.entries = db.food.entries.filter(x => x !== e); save(); closeSheet(); render(); toast('Deleted'); };
+  if ($('#fDel')) $('#fDel').onclick = () => { db.food.entries = db.food.entries.filter(x => x !== e); recomputeAdherence(e.date); save(); closeSheet(); render(); toast('Deleted'); };
 }
 function targetsSheet(){
   const coachT = db.coach.nutrition && db.coach.nutrition[curPhase()], m = db.food.targets;
@@ -1687,6 +1701,23 @@ const Coach = {
       const changed = Object.keys(rxs).filter(id => JSON.stringify(old[id]) !== JSON.stringify(rxs[id]));
       if (changed.length) changes.unshift({where: 'Set targets', diffs: changed.slice(0, 8).map(id => `${(all.find(x => x.id === id) || {}).name}: ${rxs[id].sets.map(x => x.weight ? `${x.weight}×${x.reps}` : x.weight === 0 ? `BW×${x.reps}` : `?×${x.reps}`).join(', ')}`).concat(changed.length > 8 ? [`+ ${changed.length - 8} more`] : [])});
       db.coach.prescriptions = rxs;
+    }
+    // v8: meal plan + daily checklist (each replaces the stored copy when present)
+    if (plan.meals !== undefined) {
+      const m = cleanMeals(plan.meals);
+      if (m) {
+        for (const ph of Object.keys(m)) { const old = (db.coach.meals || {})[ph]; if (JSON.stringify(old) !== JSON.stringify(m[ph])) changes.unshift({where: `Meal plan · ${PHASES[ph].short}`, diffs: [`${m[ph].meals.length} meals · ${macroLine(foodsTotal(m[ph].meals.flatMap(x => x.foods)))}${m[ph].groceries.length ? ` · ${m[ph].groceries.length} groceries` : ''}`]}); }
+        db.coach.meals = m;
+      }
+    }
+    if (plan.daily !== undefined) {
+      const d = cleanDaily(plan.daily);
+      if (d && JSON.stringify(d) !== JSON.stringify(db.coach.daily || null)) {
+        const T = d.targets, bits = [d.cardio.length ? d.cardio.map(c => `${c.type}${c.minutes ? ' ' + c.minutes + ' min' : ''}${c.days.length ? ' ' + c.days.map(x => WEEKDAYS[x]).join('/') : ''}`).join(', ') : '',
+          T.steps ? fmtNum(T.steps) + ' steps' : '', T.waterOz ? T.waterOz + ' oz water' : '', T.sleepHours ? T.sleepHours + ' h sleep' : '', d.supplements.length ? d.supplements.length + ' supplements' : '', d.photoDay != null ? 'photos ' + WEEKDAYS[d.photoDay] : ''].filter(Boolean);
+        changes.unshift({where: 'Daily', diffs: [bits.join(' · ') || 'updated']});
+      }
+      if (d) db.coach.daily = d;
     }
     db.coach.planVersion = plan.version;
     db.coach.planUpdatedAt = plan.updatedAt || null;
@@ -2247,6 +2278,351 @@ function labChart(pts, refLow, refHigh){
 }
 
 /* ---------- Boot ---------- */
+/* =====================================================================
+ * v8: Coach meal plan (Food), daily checklist (cardio / steps / water / sleep / supplements), progress photos
+ * ===================================================================== */
+const POSES = [['front', 'Front'], ['side', 'Side'], ['back', 'Back']];
+const MEAL_SLOTS = ['breakfast', 'lunch', 'dinner', 'snack'];
+const r1 = x => Math.round(x * 10) / 10;
+const numIn = (v, lo, hi) => v !== null && v !== '' && v !== undefined && Number.isFinite(+v) && +v >= lo && +v <= hi ? +v : null;
+const slugId = (s, i) => (String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24) || 'x') + (i != null ? '-' + i : '');
+
+/* ----- plan.json sanitizers (Coach.apply) ----- */
+function cleanFood(f){
+  if (!f || typeof f !== 'object' || !f.name) return null;
+  const o = {name: String(f.name).trim().slice(0, 80), qty: f.qty ? String(f.qty).slice(0, 40) : '',
+    p: r1(numIn(f.p, 0, 1000) || 0), c: r1(numIn(f.c, 0, 2000) || 0), f: r1(numIn(f.f, 0, 1000) || 0)};
+  const k = numIn(f.kcal, 0, 10000);
+  o.kcal = k != null ? Math.round(k) : Math.round(4 * o.p + 4 * o.c + 9 * o.f);
+  return o;
+}
+function cleanMeals(m){
+  if (!m || typeof m !== 'object' || Array.isArray(m)) return null;
+  const out = {};
+  for (const ph of Object.keys(PHASES)) {
+    const src = m[ph]; if (!src || typeof src !== 'object') continue;
+    const meals = (Array.isArray(src.meals) ? src.meals : []).slice(0, 12).map((x, i) => {
+      if (!x || typeof x !== 'object') return null;
+      const foods = (Array.isArray(x.foods) ? x.foods : []).slice(0, 25).map(cleanFood).filter(Boolean);
+      if (!foods.length) return null;
+      const name = String(x.name || `Meal ${i + 1}`).slice(0, 60);
+      return {id: x.id ? String(x.id).slice(0, 40) : slugId(name, i), name,
+        slot: MEAL_SLOTS.includes(x.slot) ? x.slot : (MEAL_SLOTS.find(s => lc(name).includes(s)) || 'snack'),
+        time: /^\d{1,2}:\d\d$/.test(x.time || '') ? x.time : null, foods,
+        swaps: (Array.isArray(x.swaps) ? x.swaps : []).slice(0, 6).map((s, j) => {
+          const sf = s && Array.isArray(s.foods) ? s.foods.slice(0, 25).map(cleanFood).filter(Boolean) : [];
+          return sf.length ? {name: String(s.name || `Swap ${j + 1}`).slice(0, 60), foods: sf} : null;
+        }).filter(Boolean),
+        notes: x.notes ? String(x.notes).slice(0, 300) : ''};
+    }).filter(Boolean);
+    const ids = new Set(); for (const x of meals) { while (ids.has(x.id)) x.id += '-b'; ids.add(x.id); }
+    const groceries = (Array.isArray(src.groceries) ? src.groceries : []).slice(0, 80).map(g => String(g).slice(0, 80)).filter(Boolean);
+    if (meals.length || groceries.length) out[ph] = {meals, groceries};
+  }
+  return out;
+}
+function cleanDaily(d){
+  if (!d || typeof d !== 'object' || Array.isArray(d)) return null;
+  const cardio = (Array.isArray(d.cardio) ? d.cardio : []).slice(0, 10).map((c, i) => {
+    if (!c || typeof c !== 'object' || !c.type) return null;
+    const days = Array.isArray(c.days) ? [...new Set(c.days.filter(x => Number.isInteger(x) && x >= 0 && x <= 6))].sort() : [];
+    return {id: c.id ? String(c.id).slice(0, 40) : slugId(c.type, i), type: String(c.type).slice(0, 60), minutes: Math.round(numIn(c.minutes, 1, 300) || 0) || null,
+      days, zone: c.zone ? String(c.zone).slice(0, 30) : '', notes: c.notes ? String(c.notes).slice(0, 200) : '', phase: PHASES[c.phase] ? c.phase : null};
+  }).filter(Boolean);
+  const t = d.targets && typeof d.targets === 'object' ? d.targets : {};
+  const targets = {steps: numIn(t.steps, 1, 100000) != null ? Math.round(t.steps) : null, waterOz: numIn(t.waterOz, 1, 400), sleepHours: numIn(t.sleepHours, 1, 14)};
+  const supplements = (Array.isArray(d.supplements) ? d.supplements : []).slice(0, 20).map((s, i) => !s || !s.name ? null :
+    {id: s.id ? String(s.id).slice(0, 40) : slugId(s.name, i), name: String(s.name).slice(0, 60), dose: s.dose ? String(s.dose).slice(0, 40) : '', time: s.time ? String(s.time).slice(0, 20) : ''}).filter(Boolean);
+  return {cardio, targets, supplements, photoDay: Number.isInteger(d.photoDay) && d.photoDay >= 0 && d.photoDay <= 6 ? d.photoDay : null};
+}
+
+/* ----- meal plan on Track › Food ----- */
+const foodsTotal = foods => { const t = {kcal: 0, p: 0, c: 0, f: 0}; for (const x of foods) { t.kcal += kcalOf(x); t.p += x.p || 0; t.c += x.c || 0; t.f += x.f || 0; } for (const k in t) t[k] = r1(t[k]); return t; };
+const mealPlan = () => (db.coach.meals || {})[curPhase()] || null;
+const macroLine = t => `${fmtNum(Math.round(t.kcal))} kcal · P ${fmtNum(t.p)} · C ${fmtNum(t.c)} · F ${fmtNum(t.f)}`;
+const sameFood = (a, b) => lc(a.name) === lc(b.name) && String(a.qty || '') === String(b.qty || '') && ['kcal', 'p', 'c', 'f'].every(k => Math.abs((+a[k] || 0) - (+b[k] || 0)) < 0.05);
+let mealSwap = {}; // mealId -> swap index chosen in the UI (memory only)
+function logPlanned(m, swapIdx, foodIdx){
+  const foods = swapIdx != null ? m.swaps[swapIdx].foods : m.foods, group = uid();
+  const pick = foodIdx != null ? [[foods[foodIdx], foodIdx]] : foods.map((f, i) => [f, i]);
+  for (const [f, i] of pick) db.food.entries.push({id: uid(), date: foodDate, meal: m.slot, name: f.name, qty: f.qty, kcal: kcalOf(f), p: f.p, c: f.c, f: f.f,
+    plan: {meal: m.id, food: i, swap: swapIdx != null ? swapIdx : null, group, status: 'as-planned', orig: {name: f.name, qty: f.qty, kcal: kcalOf(f), p: f.p, c: f.c, f: f.f}}});
+  recomputeAdherence(foodDate); save(); render();
+  const t = foodsTotal(pick.map(x => x[0]));
+  toast(`✓ Logged ${foodIdx != null ? pick[0][0].name : m.name} · ${fmtNum(t.kcal)} kcal`);
+}
+/** planned vs actual for one day → db.food.adherence[date] (synced, for Coach) */
+function recomputeAdherence(date){
+  const mp = mealPlan();
+  db.food.adherence = db.food.adherence && typeof db.food.adherence === 'object' ? db.food.adherence : {};
+  if (!mp || !mp.meals.length) return;
+  const ents = db.food.entries.filter(e => e.date === date);
+  const meals = {}, n = {asPlanned: 0, swapped: 0, partial: 0, edited: 0, missed: 0};
+  for (const m of mp.meals) {
+    const es = ents.filter(e => e.plan && e.plan.meal === m.id);
+    const swap = es.find(e => e.plan.swap != null), need = swap ? (m.swaps[swap.plan.swap] || {foods: []}).foods.length : m.foods.length;
+    const st = !es.length ? 'missed' : es.some(e => e.plan.status === 'edited') ? 'edited' : new Set(es.map(e => e.plan.food)).size < need ? 'partial' : swap ? 'swapped' : 'as-planned';
+    meals[m.id] = st; n[st === 'as-planned' ? 'asPlanned' : st]++;
+  }
+  const planned = foodsTotal(mp.meals.flatMap(m => m.foods)), actual = dayTotals(date);
+  db.food.adherence[date] = {phase: curPhase(), planned, actual: {kcal: actual.kcal, p: actual.p, c: actual.c, f: actual.f}, meals, ...n,
+    offPlan: ents.filter(e => !e.plan).length, kcalPct: planned.kcal ? Math.round(actual.kcal / planned.kcal * 100) : null, proteinPct: planned.p ? Math.round(actual.p / planned.p * 100) : null,
+    updated: new Date().toISOString()};
+}
+function mealPlanHtml(){
+  const mp = mealPlan(); if (!mp) return '';
+  const ents = db.food.entries.filter(e => e.date === foodDate), ad = (db.food.adherence || {})[foodDate];
+  const tot = foodsTotal(mp.meals.flatMap(m => m.foods));
+  const ST = {'as-planned': '✓ Logged', swapped: '✓ Swapped', partial: '◐ Partly', edited: '✎ Edited'};
+  return `<div class="card mp-card">
+    <div class="mp-head"><div><b>🧠 Coach meal plan · ${PHASES[curPhase()].short}</b><div class="sub">${mp.meals.length} meals · ${macroLine(tot)}</div></div>
+      ${ad ? `<div class="mp-score"><b>${ad.asPlanned + ad.swapped}</b>/${mp.meals.length}<span>on plan</span></div>` : ''}</div>
+    ${mp.meals.map(m => {
+      const si = mealSwap[m.id] != null && m.swaps[mealSwap[m.id]] ? mealSwap[m.id] : null, foods = si != null ? m.swaps[si].foods : m.foods, t = foodsTotal(foods);
+      const es = ents.filter(e => e.plan && e.plan.meal === m.id), st = ad && ad.meals[m.id] !== 'missed' && es.length ? ad.meals[m.id] : null;
+      return `<div class="mp-meal ${st ? 'logged' : ''}">
+        <div class="mpm-head"><div class="grow"><b>${esc(m.name)}</b>${m.time ? ` <span class="mpm-time">${esc(m.time)}</span>` : ''}<div class="sub">${si != null ? '↔ ' + esc(m.swaps[si].name) + ' · ' : ''}${macroLine(t)}</div></div>
+          ${st ? `<span class="pill done">${ST[st] || '✓'}</span>` : `<button class="mini-btn accent" data-logmeal="${esc(m.id)}">＋ Log meal</button>`}</div>
+        <div class="mpm-foods">${foods.map((f, i) => `<button class="mpf" data-logfood="${esc(m.id)}" data-i="${i}" aria-label="Log ${esc(f.name)}"><span class="grow">${esc(f.name)}${f.qty ? ` <small>${esc(f.qty)}</small>` : ''}</span><span class="mpf-k">${fmtNum(kcalOf(f))} · P${fmtNum(f.p)}</span><span class="mpf-add">＋</span></button>`).join('')}</div>
+        ${m.swaps.length ? `<div class="chips mp-swaps"><button class="chip ${si == null ? 'on' : ''}" data-swap="${esc(m.id)}" data-s="">Planned</button>${m.swaps.map((s, j) => `<button class="chip ${si === j ? 'on' : ''}" data-swap="${esc(m.id)}" data-s="${j}">↔ ${esc(s.name)}</button>`).join('')}</div>` : ''}
+        ${m.notes ? `<div class="mpm-note">${esc(m.notes)}</div>` : ''}
+      </div>`;
+    }).join('')}
+    ${mp.groceries.length ? `<details class="mp-groc"><summary>🛒 Grocery list (${mp.groceries.length})</summary><ul>${mp.groceries.map(g => `<li>${esc(g)}</li>`).join('')}</ul></details>` : ''}
+    <p class="note" style="margin:8px 2px 0">Tap a food to log just that item. Logged items are marked as planned; editing one marks it edited.</p>
+  </div>`;
+}
+function bindMealPlan(el){
+  const mp = mealPlan(); if (!mp) return;
+  const byId = id => mp.meals.find(m => m.id === id);
+  el.querySelectorAll('[data-logmeal]').forEach(b => b.onclick = () => { const m = byId(b.dataset.logmeal); logPlanned(m, mealSwap[m.id] != null && m.swaps[mealSwap[m.id]] ? mealSwap[m.id] : null, null); });
+  el.querySelectorAll('[data-logfood]').forEach(b => b.onclick = () => { const m = byId(b.dataset.logfood); logPlanned(m, mealSwap[m.id] != null && m.swaps[mealSwap[m.id]] ? mealSwap[m.id] : null, +b.dataset.i); });
+  el.querySelectorAll('[data-swap]').forEach(b => b.onclick = () => { if (b.dataset.s === '') delete mealSwap[b.dataset.swap]; else mealSwap[b.dataset.swap] = +b.dataset.s; render(); });
+}
+
+/* ----- daily checklist ----- */
+let dailyDate = todayStr();
+const dailyPlan = () => db.coach.daily || {cardio: [], targets: {steps: null, waterOz: null, sleepHours: null}, supplements: [], photoDay: null};
+function dueCardio(date){ const wd = parseDate(date).getDay(); return dailyPlan().cardio.filter(c => (!c.days.length || c.days.includes(wd)) && (!c.phase || c.phase === curPhase())); }
+function habitItems(date){
+  const P = dailyPlan(), T = P.targets, h = (db.habits || {})[date] || {};
+  const items = [];
+  for (const c of dueCardio(date)) { const v = (h.cardio || {})[c.id] || {}; items.push({key: 'cardio:' + c.id, kind: 'cardio', ico: '🏃', label: c.type, sub: [c.minutes ? c.minutes + ' min' : '', c.zone, c.notes].filter(Boolean).join(' · '), done: !!v.done, c}); }
+  items.push({key: 'steps', kind: 'steps', ico: '👟', label: 'Steps', target: T.steps, unit: 'steps', value: h.steps ?? null, done: T.steps ? (h.steps || 0) >= T.steps : h.steps != null});
+  items.push({key: 'water', kind: 'water', ico: '💧', label: 'Water', target: T.waterOz, unit: 'oz', value: h.water ?? null, done: T.waterOz ? (h.water || 0) >= T.waterOz : h.water != null});
+  items.push({key: 'sleep', kind: 'sleep', ico: '😴', label: 'Sleep', target: T.sleepHours, unit: 'h', value: h.sleep ?? null, done: T.sleepHours ? (h.sleep || 0) >= T.sleepHours : h.sleep != null});
+  for (const s of P.supplements) items.push({key: 'supp:' + s.id, kind: 'supp', ico: '💊', label: s.name, sub: [s.dose, s.time].filter(Boolean).join(' · '), done: !!(h.supps || {})[s.id], s});
+  return items;
+}
+/** write one change into db.habits[date] with a snapshot of the day's targets + done/total for Coach */
+function setHabit(date, fn){
+  db.habits = db.habits && typeof db.habits === 'object' ? db.habits : {};
+  const h = db.habits[date] = db.habits[date] || {cardio: {}, supps: {}, steps: null, water: null, sleep: null};
+  h.cardio = h.cardio || {}; h.supps = h.supps || {};
+  fn(h);
+  const P = dailyPlan(), items = habitItems(date);
+  h.plan = {cardio: dueCardio(date).map(c => ({id: c.id, type: c.type, minutes: c.minutes})), steps: P.targets.steps, waterOz: P.targets.waterOz, sleepHours: P.targets.sleepHours, supps: P.supplements.map(s => s.id)};
+  h.done = items.filter(i => i.done).length; h.total = items.length; h.updated = new Date().toISOString();
+  save();
+}
+const habitVal = (i) => i.value == null ? (i.target ? `0 / ${fmtNum(i.target)} ${i.unit}` : 'tap to log') : `${fmtNum(i.value)}${i.target ? ' / ' + fmtNum(i.target) : ''} ${i.unit}`;
+function todayCardHtml(){
+  const items = habitItems(todayStr()), done = items.filter(i => i.done).length, pct = items.length ? done / items.length : 0;
+  const R = 22, C = 2 * Math.PI * R;
+  return `<div class="card today-card" id="todayCard">
+    <div class="tc-head"><svg class="tc-ring" viewBox="0 0 52 52"><circle cx="26" cy="26" r="${R}" class="bg"/><circle cx="26" cy="26" r="${R}" class="fg" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct)}"/><text x="26" y="30">${done}/${items.length}</text></svg>
+      <div class="grow"><b>Today</b><div class="sub">${db.coach.daily ? 'Daily checklist from Coach' : 'Daily checklist'}</div></div><button class="text-btn" id="tcOpen">Open ›</button></div>
+    <div class="tc-items">${items.map(i => `<button class="tc-item ${i.done ? 'done' : ''}" data-hk="${esc(i.key)}"><span class="tci-ico">${i.done ? '✓' : i.ico}</span><span class="grow"><b>${esc(i.label)}</b><small>${i.kind === 'cardio' || i.kind === 'supp' ? esc(i.sub || '') : habitVal(i)}</small></span></button>`).join('')}</div>
+  </div>`;
+}
+function toggleHabit(date, key){
+  const [kind, id] = key.split(':');
+  if (kind === 'cardio') setHabit(date, h => { const v = h.cardio[id] || {}; const c = dailyPlan().cardio.find(x => x.id === id) || {}; h.cardio[id] = v.done ? {done: false} : {done: true, minutes: v.minutes || c.minutes || null}; });
+  else if (kind === 'supp') setHabit(date, h => { h.supps[id] = !h.supps[id]; });
+  else return false;
+  return true;
+}
+function bindTodayCard(){
+  if (!$('#todayCard')) return;
+  $('#tcOpen').onclick = () => { dailyDate = todayStr(); openTrack('daily'); };
+  document.querySelectorAll('#todayCard [data-hk]').forEach(b => b.onclick = () => {
+    if (toggleHabit(todayStr(), b.dataset.hk)) render(); else { dailyDate = todayStr(); openTrack('daily'); }
+  });
+}
+function renderDaily(el){
+  setHeader('Daily', fmtDay(dailyDate, true));
+  const items = habitItems(dailyDate), done = items.filter(i => i.done).length, P = dailyPlan();
+  const week = Array.from({length: 7}, (_, k) => dateAdd(dailyDate, k - 6)).map(d => { const h = (db.habits || {})[d]; return {d, pct: h && h.total ? h.done / h.total : null}; });
+  const QUICK = {steps: [1000, 2500], water: [8, 16], sleep: [0.5]};
+  el.innerHTML = `
+    <div class="date-nav"><button class="icon-btn" id="dPrev" aria-label="Previous day">‹</button><input type="date" id="dDate" value="${dailyDate}" max="${todayStr()}"><button class="icon-btn" id="dNext" aria-label="Next day" ${dailyDate >= todayStr() ? 'disabled' : ''}>›</button></div>
+    <div class="card daily-sum"><div class="ds-top"><b>${done}/${items.length}</b> done${db.coach.daily ? '' : ' · <span class="sub">Coach hasn\'t published daily targets yet</span>'}</div>
+      <div class="ds-week">${week.map(w => `<div class="dsw ${w.d === dailyDate ? 'cur' : ''}"><i style="height:${w.pct == null ? 0 : Math.max(6, Math.round(w.pct * 100))}%"></i><span>${WEEKDAYS[parseDate(w.d).getDay()][0]}</span></div>`).join('')}</div></div>
+    ${items.some(i => i.kind === 'cardio') ? `<div class="section-title">Cardio</div>` : ''}
+    <div class="list">${items.filter(i => i.kind === 'cardio').map(i => `<button class="row hb-row ${i.done ? 'done' : ''}" data-hk="${esc(i.key)}"><span class="hb-check">${i.done ? '✓' : ''}</span><div class="main"><div class="name">${esc(i.label)}</div><div class="meta">${esc(i.sub)}</div></div></button>`).join('')}</div>
+    <div class="section-title">Targets</div>
+    <div class="list">${items.filter(i => ['steps', 'water', 'sleep'].includes(i.kind)).map(i => `<div class="row hb-row hb-val ${i.done ? 'done' : ''}"><span class="hb-check">${i.done ? '✓' : i.ico}</span>
+      <div class="main"><div class="name">${i.label}</div><div class="meta">${i.target ? 'Goal ' + fmtNum(i.target) : 'No goal set'}</div></div>
+      <input class="hb-in" type="number" inputmode="decimal" min="0" step="any" data-hv="${i.kind}" value="${i.value ?? ''}" placeholder="0"><span class="hb-unit">${i.unit}</span>
+      ${QUICK[i.kind].map(q => `<button class="mini-btn" data-hq="${i.kind}" data-q="${q}">+${fmtNum(q)}</button>`).join('')}</div>`).join('')}</div>
+    ${P.supplements.length ? `<div class="section-title">Supplements</div><div class="list">${items.filter(i => i.kind === 'supp').map(i => `<button class="row hb-row ${i.done ? 'done' : ''}" data-hk="${esc(i.key)}"><span class="hb-check">${i.done ? '✓' : ''}</span><div class="main"><div class="name">${esc(i.label)}</div><div class="meta">${esc(i.sub || '')}</div></div></button>`).join('')}</div>` : ''}
+    <div class="section-title">Progress photos</div>
+    <button class="row" id="dPhotos"><div class="main"><div class="name">📸 Weekly check-in</div><div class="meta">${photoStatusText()}</div></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></button>
+    <p class="note">Ticks and values sync to Coach by date. Steps are entered by hand (a web app can't read Apple Health).</p>`;
+  const go = d => { dailyDate = d > todayStr() ? todayStr() : d; render(); };
+  $('#dPrev').onclick = () => go(dateAdd(dailyDate, -1)); $('#dNext').onclick = () => go(dateAdd(dailyDate, 1));
+  $('#dDate').onchange = ev => ev.target.value && go(ev.target.value);
+  el.querySelectorAll('[data-hk]').forEach(b => b.onclick = () => { toggleHabit(dailyDate, b.dataset.hk); render(); });
+  const KEY = {steps: 'steps', water: 'water', sleep: 'sleep'}, MAX = {steps: 100000, water: 400, sleep: 24};
+  el.querySelectorAll('[data-hv]').forEach(inp => inp.onchange = () => { const k = inp.dataset.hv, v = numIn(inp.value, 0, MAX[k]); setHabit(dailyDate, h => { h[KEY[k]] = v == null ? null : (k === 'steps' ? Math.round(v) : r1(v)); }); render(); });
+  el.querySelectorAll('[data-hq]').forEach(b => b.onclick = () => { const k = b.dataset.hq; setHabit(dailyDate, h => { h[KEY[k]] = Math.min(MAX[k], r1((h[KEY[k]] || 0) + +b.dataset.q)); }); render(); });
+  $('#dPhotos').onclick = () => push({v: 'photos'});
+}
+
+/* ----- progress photos: private repo photos/YYYY-MM-DD-pose.jpg, index in db.photos, small thumbs in localStorage ----- */
+const THUMB_KEY = 'liftlog.thumbs', THUMB_MAX = 45;
+const Thumbs = {
+  all(){ try { return JSON.parse(localStorage.getItem(THUMB_KEY)) || {}; } catch (e) { return {}; } },
+  get(path){ return this.all()[path] || null; },
+  put(path, url){
+    const m = this.all(); m[path] = url;
+    const keys = Object.keys(m).sort().reverse(); for (const k of keys.slice(THUMB_MAX)) delete m[k]; // newest dates win
+    try { localStorage.setItem(THUMB_KEY, JSON.stringify(m)); } catch (e) { /* quota: skip cache */ }
+  }
+};
+const photoFullCache = new Map(); // path -> object URL (memory only)
+const photoDates = () => [...new Set((db.photos || []).map(p => p.date))].sort();
+const lastPhotoDate = () => photoDates().pop() || null;
+const dayDiff = (a, b) => Math.round((parseDate(a) - parseDate(b)) / 864e5);
+function photoDue(today = todayStr()){
+  const pd = dailyPlan().photoDay, last = lastPhotoDate();
+  let due = today;
+  if (pd != null) { const back = (parseDate(today).getDay() - pd + 7) % 7; due = dateAdd(today, -back); }
+  if (!last) return {due: true, never: true, dueDate: due};
+  return {due: dayDiff(due, last) >= 7, never: false, dueDate: due, since: dayDiff(today, last)};
+}
+function photoStatusText(){
+  const last = lastPhotoDate(), pd = dailyPlan().photoDay;
+  return (last ? `Last: ${fmtDay(last, true)} (${daysAgo(last)})` : 'No photos yet') + (pd != null ? ` · Check-in day: ${WEEKDAYS[pd]}` : ' · weekly');
+}
+function photoBannerHtml(){
+  const st = photoDue();
+  if (!st.due || localStorage.getItem('liftlog.photoSnooze') === todayStr()) return '';
+  return `<div class="photo-banner" id="photoBanner"><span class="pb-ico">📸</span><div class="grow"><b>Progress photo check-in</b><div class="sub">${st.never ? 'Take your first front / side / back photos.' : `It's been ${st.since} days. Same spot, same light.`}</div></div>
+    <button class="mini-btn accent" id="pbGo">Take</button><button class="cb-x" id="pbX" aria-label="Later">✕</button></div>`;
+}
+function bindPhotoBanner(){
+  if ($('#pbGo')) $('#pbGo').onclick = () => { openTrack('daily'); push({v: 'photos'}); };
+  if ($('#pbX')) $('#pbX').onclick = () => { localStorage.setItem('liftlog.photoSnooze', todayStr()); render(); };
+}
+function loadImage(src){ return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('image')); i.src = src; }); }
+function drawScaled(img, max, q){
+  const s = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight)), w = Math.max(1, Math.round(img.naturalWidth * s)), h = Math.max(1, Math.round(img.naturalHeight * s));
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h; cv.getContext('2d').drawImage(img, 0, 0, w, h);
+  return {cv, w, h};
+}
+/** phone-side compression: longest side 1080 px JPEG (~150-300 KB) + ~200 px thumbnail */
+async function compressPhoto(file){
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await loadImage(url); // Safari applies EXIF orientation when drawing
+    const big = drawScaled(img, 1080, 0.82);
+    const blob = await new Promise(r => big.cv.toBlob(r, 'image/jpeg', 0.82));
+    const thumb = drawScaled(img, 200, 0.6).cv.toDataURL('image/jpeg', 0.6);
+    return {blob, w: big.w, h: big.h, thumb};
+  } finally { URL.revokeObjectURL(url); }
+}
+const blobB64 = blob => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(blob); });
+const Photos = {
+  busy: {},
+  url: path => `https://api.github.com/repos/${Sync.owner}/${Sync.repo}/contents/${path}`,
+  async remoteSha(path){
+    const res = await fetch(this.url(path) + '?t=' + Date.now(), {headers: Sync.headers(), cache: 'no-store'});
+    if (res.status === 404) return null;
+    if (!res.ok) throw {status: res.status, body: await res.json().catch(() => ({}))};
+    return (await res.json()).sha;
+  },
+  async upload(date, pose, file){
+    if (!Sync.enabled) throw {status: 0, body: {message: 'Coach Sync is off'}};
+    const path = `photos/${date}-${pose}.jpg`;
+    const c = await compressPhoto(file);
+    const content = await blobB64(c.blob);
+    const old = (db.photos || []).find(p => p.path === path);
+    let sha = old ? old.sha : undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const body = {message: `Progress photo ${date} ${pose}`, content}; if (sha) body.sha = sha;
+      const res = await fetch(this.url(path), {method: 'PUT', headers: {...Sync.headers(), 'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+      if (res.ok) {
+        const j = await res.json();
+        const rec = {date, pose, path, sha: j.content && j.content.sha, w: c.w, h: c.h, bytes: c.blob.size, at: new Date().toISOString()};
+        db.photos = (db.photos || []).filter(p => p.path !== path).concat(rec).sort((a, b) => a.date.localeCompare(b.date) || POSES.findIndex(x => x[0] === a.pose) - POSES.findIndex(x => x[0] === b.pose));
+        Thumbs.put(path, c.thumb);
+        const prevUrl = photoFullCache.get(path); if (prevUrl) URL.revokeObjectURL(prevUrl);
+        photoFullCache.set(path, URL.createObjectURL(c.blob));
+        save();
+        return rec;
+      }
+      if ((res.status === 409 || res.status === 422) && attempt === 0) { sha = await this.remoteSha(path) || undefined; continue; } // file exists / sha moved
+      throw {status: res.status, body: await res.json().catch(() => ({}))};
+    }
+  },
+  /** full image via the contents API (raw), memory-cached object URL */
+  async full(p){
+    if (photoFullCache.has(p.path)) return photoFullCache.get(p.path);
+    const res = await fetch(this.url(p.path), {headers: {...Sync.headers(), 'Accept': 'application/vnd.github.raw'}, cache: 'no-store'});
+    if (!res.ok) throw {status: res.status};
+    const u = URL.createObjectURL(await res.blob());
+    photoFullCache.set(p.path, u);
+    if (!Thumbs.get(p.path)) { try { Thumbs.put(p.path, drawScaled(await loadImage(u), 200, 0.6).cv.toDataURL('image/jpeg', 0.6)); } catch (e) {} }
+    return u;
+  }
+};
+let photoView = {date: null, a: null, b: null, pose: 'front'};
+function renderPhotos(el){
+  setHeader('Progress photos', photoStatusText());
+  const dates = photoDates(), on = Sync.enabled;
+  if (!photoView.date) photoView.date = todayStr();
+  if (!photoView.b || !dates.includes(photoView.b)) photoView.b = dates[dates.length - 1] || null;
+  if (!photoView.a || !dates.includes(photoView.a)) photoView.a = dates[0] || null;
+  const at = (d, pose) => (db.photos || []).find(p => p.date === d && p.pose === pose);
+  const thumbHtml = p => { const t = p && Thumbs.get(p.path); return t ? `<img src="${t}" alt="">` : p ? '<span class="ph-cloud">☁︎</span>' : ''; };
+  const wAt = d => { const e = db.body.filter(x => Math.abs(dayDiff(x.date, d)) <= 3).sort((a, b) => Math.abs(dayDiff(a.date, d)) - Math.abs(dayDiff(b.date, d)))[0]; return e ? `${fmtNum(e.weight)} lb` : ''; };
+  el.innerHTML = `
+    ${on ? '' : `<div class="card muted-card">Turn on Coach Sync (Settings) to take progress photos. They're stored only in your private <b>lift-log-data</b> repo, never on the public site.</div>`}
+    <div class="section-title">Check-in</div>
+    <div class="date-chip"><span>Photo date</span><input type="date" id="phDate" value="${photoView.date}" max="${todayStr()}"></div>
+    <div class="pose-grid">${POSES.map(([k, l]) => { const p = at(photoView.date, k), busy = Photos.busy[photoView.date + k]; return `<label class="pose-tile ${p ? 'has' : ''} ${on ? '' : 'off'}">
+      ${thumbHtml(p)}<span class="pt-l">${busy ? 'Uploading…' : (p ? '✓ ' : '＋ ') + l}</span>
+      <input type="file" accept="image/*" data-pose="${k}" ${on && !busy ? '' : 'disabled'} hidden></label>`; }).join('')}</div>
+    <p class="note">Same spot, same light, relaxed and flexed as you like. Photos are shrunk to 1080 px on the phone and uploaded to your private repo with your sync token.</p>
+    ${dates.length ? `<div class="section-title">Compare</div>
+      <div class="seg" id="poseSeg">${POSES.map(([k, l]) => `<button data-p="${k}" class="${photoView.pose === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <div class="cmp-pick"><select class="select" id="cmpA">${dates.map(d => `<option ${d === photoView.a ? 'selected' : ''}>${d}</option>`).join('')}</select><span>vs</span><select class="select" id="cmpB">${dates.map(d => `<option ${d === photoView.b ? 'selected' : ''}>${d}</option>`).join('')}</select></div>
+      <div class="cmp">${[photoView.a, photoView.b].map((d, i) => { const p = at(d, photoView.pose); return `<div class="cmp-side"><div class="cmp-img" id="cmp${i}">${p ? (Thumbs.get(p.path) ? `<img src="${Thumbs.get(p.path)}" class="blur" alt="">` : '') + '<span class="cmp-load">Loading…</span>' : '<span class="cmp-none">No ' + photoView.pose + ' photo</span>'}</div>
+        <div class="cmp-cap"><b>${fmtDay(d, true)}</b>${wAt(d) ? ' · ' + wAt(d) : ''}</div></div>`; }).join('')}</div>
+      ${photoView.a && photoView.b && photoView.a !== photoView.b ? `<p class="note" style="text-align:center">${Math.abs(dayDiff(photoView.b, photoView.a))} days apart</p>` : ''}
+      <div class="section-title">History</div>
+      <div class="list">${[...dates].reverse().map(d => `<div class="row ph-row"><div class="main"><div class="name">${fmtDay(d, true)}</div><div class="meta">${POSES.filter(([k]) => at(d, k)).map(x => x[1]).join(' · ')}</div></div>
+        <div class="ph-thumbs">${POSES.map(([k]) => `<span class="ph-t">${thumbHtml(at(d, k))}</span>`).join('')}</div></div>`).join('')}</div>` : ''}`;
+  $('#phDate').onchange = ev => { if (ev.target.value) { photoView.date = ev.target.value; render(); } };
+  el.querySelectorAll('input[data-pose]').forEach(inp => inp.onchange = async () => {
+    const file = inp.files && inp.files[0]; if (!file) return;
+    const d = photoView.date, pose = inp.dataset.pose;
+    Photos.busy[d + pose] = true; render();
+    try { await Photos.upload(d, pose, file); toast(`✓ ${pose} photo saved privately`); photoView.b = d; }
+    catch (e) { toast(e && e.status ? Sync.explain(e.status, e.body) : 'Upload failed. Check your connection and try again.'); }
+    finally { delete Photos.busy[d + pose]; if (cur().v === 'photos') render(); }
+  });
+  if ($('#poseSeg')) el.querySelectorAll('#poseSeg button').forEach(b => b.onclick = () => { photoView.pose = b.dataset.p; render(); });
+  if ($('#cmpA')) { $('#cmpA').onchange = ev => { photoView.a = ev.target.value; render(); }; $('#cmpB').onchange = ev => { photoView.b = ev.target.value; render(); }; }
+  [photoView.a, photoView.b].forEach(async (d, i) => {
+    const p = at(d, photoView.pose), box = $('#cmp' + i); if (!p || !box) return;
+    if (!on) { box.querySelector('.cmp-load').textContent = 'Sync off'; return; }
+    try { const u = await Photos.full(p); if (cur().v === 'photos' && $('#cmp' + i)) $('#cmp' + i).innerHTML = `<img src="${u}" alt="${esc(p.pose)} ${esc(p.date)}">`; }
+    catch (e) { const l = box.querySelector('.cmp-load'); if (l) l.textContent = 'Could not load'; }
+  });
+}
+
 function checkPhase(){
   if (needsPhase() && stacks.workout[0].v !== 'phase') {
     stacks.workout = [{v:'phase'}];

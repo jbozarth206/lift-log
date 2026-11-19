@@ -389,3 +389,89 @@ body.has-rest #toast{bottom:calc(var(--tabh) + var(--sab) + 112px)}
 .portal-avail .pa-day b{color:#fff;margin-right:4px}
 .draw-src{font-size:11.5px;font-weight:600;color:var(--muted);text-transform:none;letter-spacing:0;margin-top:2px}
 .lab-note{background:var(--card);border-left:3px solid #5aa9ff;border-radius:10px;padding:9px 11px;margin:0 0 8px;font-size:13px;line-height:1.4;color:#dfe4ee}
+
+/* v8: meal plan, daily checklist, progress photos */
+.track-seg button{font-size:12px;padding:0 1px;letter-spacing:-.02em;white-space:nowrap;overflow:hidden}
+.mini-btn.accent{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#140a04;font-weight:700}
+.chip.on{border-color:var(--accent);color:var(--accent)}
+.mp-card{margin-top:12px;padding:14px}
+.mp-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px}
+.mp-head .sub,.mpm-head .sub{font-size:12.5px;color:var(--muted);margin-top:2px}
+.mp-score{text-align:right;font-size:13px;color:var(--muted)}
+.mp-score b{font-size:22px;color:var(--green)}
+.mp-score span{display:block;font-size:11px}
+.mp-meal{border-top:1px solid var(--line);padding:12px 0 6px}
+.mp-meal.logged .mpm-head b{color:var(--green)}
+.mpm-head{display:flex;align-items:center;gap:10px}
+.mpm-head .grow{flex:1;min-width:0}
+.mpm-time{font-size:12px;color:var(--muted);font-weight:600}
+.mpm-foods{margin-top:8px;display:flex;flex-direction:column;gap:4px}
+.mpf{display:flex;align-items:center;gap:8px;text-align:left;background:var(--card2);border-radius:10px;padding:8px 10px;font-size:14px}
+.mpf .grow{flex:1;min-width:0}
+.mpf small{color:var(--muted)}
+.mpf-k{font-size:12px;color:var(--muted);white-space:nowrap}
+.mpf-add{color:var(--accent);font-weight:800}
+.mp-swaps{margin-top:8px;gap:6px}
+.mp-swaps .chip{min-height:32px;padding:5px 10px;font-size:12.5px}
+.mpm-note{font-size:12.5px;color:#c9cfdb;margin-top:6px}
+.mp-groc{margin-top:10px;font-size:14px}
+.mp-groc summary{cursor:pointer;font-weight:700;color:var(--muted)}
+.mp-groc ul{margin:8px 0 0 18px;padding:0;line-height:1.6}
+.plan-tag{font-size:11px;font-weight:700;color:var(--green)}
+.plan-tag.ed{color:#ffc145}
+.today-card{margin-top:12px;padding:14px}
+.tc-head{display:flex;align-items:center;gap:12px}
+.tc-head .grow{flex:1}
+.tc-head .sub{font-size:12.5px;color:var(--muted)}
+.tc-ring{width:52px;height:52px;transform:rotate(-90deg)}
+.tc-ring circle{fill:none;stroke-width:5}
+.tc-ring .bg{stroke:var(--card2)}
+.tc-ring .fg{stroke:var(--green);stroke-linecap:round;transition:stroke-dashoffset .4s}
+.tc-ring text{transform:rotate(90deg);transform-origin:26px 26px;fill:var(--text);font-size:13px;font-weight:800;text-anchor:middle}
+.tc-items{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;margin-top:12px}
+.tc-item{min-width:0;display:flex;align-items:center;gap:8px;text-align:left;background:var(--card2);border-radius:12px;padding:9px 10px;min-height:52px}
+.tc-item .grow{display:flex;flex-direction:column;min-width:0}
+.tc-item b{font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tc-item small{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tci-ico{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--bg);font-size:14px;flex:none}
+.tc-item.done .tci-ico{background:var(--green);color:#06281a;font-weight:800}
+.tc-item.done b{color:var(--green)}
+.daily-sum{padding:14px}
+.ds-top{font-size:15px}
+.ds-top b{font-size:22px}
+.ds-top .sub{color:var(--muted);font-size:13px}
+.ds-week{display:flex;gap:6px;height:56px;margin-top:10px;align-items:flex-end}
+.dsw{flex:1;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:4px;font-size:11px;color:var(--muted)}
+.dsw i{display:block;width:100%;background:var(--green);border-radius:6px 6px 3px 3px;opacity:.8}
+.dsw.cur span{color:var(--text);font-weight:800}
+.hb-row{display:flex;align-items:center;gap:10px}
+.hb-check{width:30px;height:30px;border-radius:50%;border:2px solid var(--line);display:grid;place-items:center;flex:none;font-weight:800}
+.hb-row.done .hb-check{background:var(--green);border-color:var(--green);color:#06281a}
+.hb-val .main{flex:1;min-width:0}
+.hb-in{width:74px;height:40px;border-radius:10px;border:1.5px solid var(--line);background:var(--bg);text-align:center;font-size:16px;font-weight:700;color:var(--text)}
+.hb-unit{font-size:11px;color:var(--muted);width:26px}
+.hb-val .mini-btn{padding:8px 7px;font-size:13px}
+.photo-banner{display:flex;align-items:center;gap:10px;background:linear-gradient(135deg,rgba(90,169,255,.18),var(--card));border:1px solid rgba(90,169,255,.35);border-radius:16px;padding:12px;margin-bottom:12px}
+.photo-banner .grow{flex:1}
+.photo-banner .sub{font-size:12.5px;color:#c9cfdb}
+.pb-ico{font-size:24px}
+.pose-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+.pose-tile{position:relative;aspect-ratio:3/4;border-radius:14px;background:var(--card);border:1.5px dashed var(--line);display:flex;align-items:flex-end;justify-content:center;overflow:hidden;cursor:pointer}
+.pose-tile.has{border-style:solid;border-color:var(--green)}
+.pose-tile.off{opacity:.5}
+.pose-tile img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.pt-l{position:relative;margin:8px;padding:4px 10px;border-radius:999px;background:rgba(11,13,18,.75);font-size:13px;font-weight:700}
+.ph-cloud{position:absolute;inset:0;display:grid;place-items:center;font-size:28px;color:var(--muted)}
+.cmp-pick{display:flex;align-items:center;gap:8px;margin-top:10px}
+.cmp-pick .select{height:44px;font-size:15px}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.cmp-img{position:relative;aspect-ratio:3/4;border-radius:14px;background:var(--card);overflow:hidden;display:grid;place-items:center}
+.cmp-img img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.cmp-img img.blur{filter:blur(6px)}
+.cmp-load,.cmp-none{position:relative;font-size:13px;color:var(--muted)}
+.cmp-cap{text-align:center;font-size:13px;margin-top:6px;color:#c9cfdb}
+.ph-row .main{flex:1}
+.ph-thumbs{display:flex;gap:4px}
+.ph-t{position:relative;width:34px;height:45px;border-radius:6px;background:var(--card2);overflow:hidden}
+.ph-t img{width:100%;height:100%;object-fit:cover}
+.ph-t .ph-cloud{font-size:14px}

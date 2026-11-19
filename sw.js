@@ -1,5 +1,5 @@
-const CACHE = 'liftlog-v7-3';
-const ASSETS = ['./', './index.html', './styles.css', './app.js', './styles.css?v=73', './app.js?v=73', './mychart.js', './mychart.config.js', './mychart.js?v=73', './mychart.config.js?v=73', './manifest.webmanifest',
+const CACHE = 'liftlog-v8-0';
+const ASSETS = ['./', './index.html', './styles.css', './app.js', './styles.css?v=80', './app.js?v=80', './mychart.js', './mychart.config.js', './mychart.js?v=80', './mychart.config.js?v=80', './manifest.webmanifest',
   './icons/apple-touch-icon.png', './icons/icon-192.png', './icons/icon-512.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS.map(u => new Request(u, {cache: 'reload'})))).then(() => self.skipWaiting()));

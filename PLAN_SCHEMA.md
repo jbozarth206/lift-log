@@ -137,3 +137,73 @@ Rules:
 - Fallback when an exercise has no current prescription, labelled **⚙️ Auto** (never "Coach"): if every set last time reached the top of the plan's rep range, +5 lb (upper body) / +10 lb (lower body: Legs group, or squat/deadlift/leg press/lunge/hip thrust/RDL/rack pull/good morning/calf moves) with reps at the bottom of the range; otherwise the same weight with +1 rep (capped at the top of the range). With no history either, the card shows the plan's sets × reps and nothing is pre-filled.
 - Each logged set is marked **▲ beat / ✓ met / ▼ missed** against its target. More weight and fewer reps (or the reverse) is judged by estimated 1RM. The target is saved with the entry (`entries[].target`), so the Journal shows it too.
 - `tools/validate_plan.py` checks all of this. Pass `--data liftlog.json` to confirm every key matches an exercise.
+
+## Additions in app 8.0: `meals` and `daily` (both optional)
+Plans without these keys work as before. When a plan includes `meals` or `daily`, it **replaces** the stored copy. Leave a key out to keep the previous one. Changes show in the update banner.
+
+### `meals`: per-phase meal template (Track › Food)
+```json
+"meals": {
+  "bulk": {
+    "meals": [
+      {"id": "breakfast", "name": "Breakfast", "slot": "breakfast", "time": "07:30",
+       "foods": [
+         {"name": "Whole eggs", "qty": "4 large", "kcal": 288, "p": 25, "c": 2, "f": 20},
+         {"name": "Oats", "qty": "100 g", "kcal": 380, "p": 13, "c": 67, "f": 7}],
+       "swaps": [{"name": "Greek yogurt bowl", "foods": [
+         {"name": "Greek yogurt 0%", "qty": "300 g", "kcal": 177, "p": 30, "c": 11, "f": 1},
+         {"name": "Granola", "qty": "80 g", "kcal": 380, "p": 8, "c": 54, "f": 14}]}],
+       "notes": "Eat within an hour of waking."}
+    ],
+    "groceries": ["Eggs (2.5 dozen)", "Oats 1 kg", "Chicken breast 1.75 kg"]
+  },
+  "cut": {"meals": [], "groceries": []}
+}
+```
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `meals.<phase>` | object | – | `bulk` / `cut`. The app shows the plan for his **current** phase. A phase you leave out has no meal plan. |
+| `.meals[]` | list ≤12 | yes | In display order. |
+| `.id` | string | strongly recommended | Stable id. Logged entries and adherence are keyed by it, so keep it the same across versions. Defaults to a slug of the name. |
+| `.name` | string ≤60 | yes | e.g. "Pre-workout". |
+| `.slot` | `breakfast`/`lunch`/`dinner`/`snack` | recommended | Which food-log section logged items go into. Defaults to a slot named in `name`, else `snack`. |
+| `.time` | `"HH:MM"` | no | Shown next to the name. |
+| `.foods[]` | list 1–25 | yes | `{name ≤80, qty ≤40, kcal 0–10000, p 0–1000, c 0–2000, f 0–1000}` (grams). Missing `kcal` = 4/4/9 from macros. The app sums each meal and the day. |
+| `.swaps[]` | list ≤6 | no | Alternatives for the whole meal: `{name, foods[]}` (same food format). |
+| `.notes` | string ≤300 | no | Cue under the meal. |
+| `.groceries` | list ≤80 strings | no | Short weekly shopping list. |
+
+**In the app**: one tap ("＋ Log meal") logs every food of the meal (or of the chosen swap) into `food.entries`; tapping one food logs only that food. Logged items carry `plan.status` = `as-planned`, or `edited` once he changes them. The app keeps a daily planned-vs-actual summary in `food.adherence` (see COACH_GUIDE.md), which syncs to the private data repo. `nutrition` targets still drive the totals bar, so keep the meal plan consistent with them.
+
+### `daily`: cardio, daily targets, supplements, photo day (Workout › Today card and Track › Daily)
+```json
+"daily": {
+  "cardio": [
+    {"id": "walk", "type": "Incline walk", "minutes": 25, "days": [1, 2, 3, 4, 5], "zone": "Z2 (120-135 bpm)", "notes": "After lifting"},
+    {"id": "bike", "type": "Bike intervals", "minutes": 15, "days": [6], "zone": "Z4", "phase": "cut"}
+  ],
+  "targets": {"steps": 10000, "waterOz": 128, "sleepHours": 8},
+  "supplements": [
+    {"id": "vitd", "name": "Vitamin D3", "dose": "5,000 IU", "time": "AM"},
+    {"id": "fishoil", "name": "Fish oil", "dose": "2 g EPA/DHA"}
+  ],
+  "photoDay": 0
+}
+```
+| Field | Type | Meaning |
+|---|---|---|
+| `cardio[]` | list ≤10 | `{id, type ≤60 (required), minutes 1–300, days [0–6] (0 = Sun; empty/omitted = every day), zone ≤30 (e.g. "Z2" or "120-135 bpm"), notes ≤200, phase bulk/cut (optional: only in that phase)}`. Shown as a checklist item on the days it's due. |
+| `targets.steps` | int 1–100000 | Daily steps (he types them in; a web app can't read Apple Health). |
+| `targets.waterOz` | number 1–400 | Fluid ounces per day. |
+| `targets.sleepHours` | number 1–14 | Hours per night. |
+| `supplements[]` | list ≤20 | `{id, name ≤60 (required), dose ≤40, time ≤20}`. Daily tick boxes. **Public**: generic names only, no reasons or prescriptions. |
+| `photoDay` | int 0–6 or null | Weekday for the progress-photo reminder (0 = Sun). With it, the home banner appears on/after that day when the last photos are 7+ days older than that day. Without it, the banner appears once 7+ days have passed since the last photos. |
+
+Give cardio and supplements stable `id`s (ticks are stored by id in `habits`). Ticks and values sync to the private data repo by date (`habits`, see COACH_GUIDE.md).
+
+### Privacy rule (enforced by `tools/validate_plan.py`)
+`plan.json` is served publicly. The validator fails (`PRIVACY` errors) if:
+- any key anywhere is a health-data key (`peds`, `labs`, `bloodwork`, `photos`, `habits`, `body`, `profile`, `doses`, `compounds`, `medications`, `diagnosis`, `patient`, `mychart`, …), or
+- any string (message, notes, names) mentions PED compounds or terms (testosterone, "Test E", tren, deca, masteron, primo, anavar, HCG, AI names, SARMs, TRT, PCT, injections, mg/mL…), lab markers or results (hematocrit, LDL/HDL, A1c, PSA, estradiol, TSH, bloodwork, labs, "low vitamin D"…), diagnoses, providers or MyChart.
+
+Keep all of that in the private `lift-log-data` repo and in direct messages.

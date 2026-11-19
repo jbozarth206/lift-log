@@ -10,6 +10,9 @@ Checks:
     (compares with `git show origin/main:plan.json` unless --prev/--no-prev is given)
   - every exercise has a name or id, sets 1-20, reps [min, max] 1-100, rest 0-900 s
   - optional "prescriptions": {exerciseId: {sets: [{weight, reps}], note, updated, phase}}
+  - optional "meals" (per-phase meal template, swaps, groceries) and "daily" (cardio, targets, supplements, photoDay)
+  - PRIVACY: plan.json is PUBLIC. Rejects health keys (peds, labs, photos, habits, body, ...) anywhere,
+    and strings that mention PED compounds, lab markers/results or diagnoses
   - with --data: every "id" exists in that body group in the user's synced data,
     and every prescriptions key matches an exercise id (or name)
 Exit code 0 = OK to push, 1 = fix the errors first.
@@ -26,6 +29,131 @@ FOCUSES = {
 }
 ARM_HOSTS = {'back', 'chest'}
 ALLOWED_KEYS = {'id', 'name', 'sets', 'reps', 'rest', 'notes', 'arm'}
+
+
+MEAL_SLOTS = {'breakfast', 'lunch', 'dinner', 'snack'}
+# --- privacy: plan.json is served publicly at jbozarth206.github.io/lift-log/plan.json ---
+HEALTH_KEYS = {'peds', 'ped', 'labs', 'lab', 'labresults', 'bloodwork', 'photos', 'photo', 'habits', 'body', 'profile', 'doses', 'dose_log',
+               'compounds', 'medications', 'meds', 'diagnosis', 'diagnoses', 'conditions', 'bodyfat', 'bf', 'patient', 'mychart', 'fhir'}
+HEALTH_RE = re.compile(r'''\b(
+    testosterone|test\s?(e|c|cyp|enan)|enanthate|cypionate|propionate|undecylenate|decanoate|nandrolone|deca|npp|masteron|drostanolone|
+    trenbolone|tren|primobolan|primo|methenolone|equipoise|boldenone|anavar|oxandrolone|dianabol|dbol|winstrol|stanozolol|superdrol|turinabol|
+    sarms?|ostarine|rad[- ]?140|lgd[- ]?4033|mk[- ]?677|hgh|growth\s+hormone|bpc[- ]?157|hcg|anastrozole|arimidex|aromasin|exemestane|
+    letrozole|clomid|clomiphene|nolvadex|tamoxifen|cabergoline|pct|post[- ]cycle|trt|steroids?|aas|injections?|mg/ml|
+    bloodwork|blood\s?work|blood\s?test|labs?|lab\s+results?|hematocrit|hemoglobin|hgb|hct|ldl|hdl|a1c|cholesterol|triglycerides?|estradiol|shbg|
+    psa|tsh|egfr|creatinine|liver\s+enzymes|bilirubin|lipid\s+panel|cbc|cmp|vitamin\s+d\s+(level|deficien\w*|low)|low\s+vitamin\s+d|
+    diagnos\w*|hypertension|blood\s+pressure|mychart|aprn|physician|endocrinolog\w*|urolog\w*|cardiolog\w*|echocardiogram|holter|troponin|ekg|ecg
+)\b''', re.I | re.X)
+
+
+def privacy_scan(node, where, errors):
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if isinstance(k, str) and k.lower() in HEALTH_KEYS:
+                errors.append(f'PRIVACY {where}.{k}: health data key in the public plan.json (keep PED/lab/photo/body data in lift-log-data only)')
+            privacy_scan(v, f'{where}.{k}', errors)
+    elif isinstance(node, list):
+        for i, v in enumerate(node): privacy_scan(v, f'{where}[{i}]', errors)
+    elif isinstance(node, str):
+        m = HEALTH_RE.search(node)
+        if m: errors.append(f'PRIVACY {where}: mentions "{m.group(0)}". plan.json is public; no PED, lab, diagnosis or provider details')
+
+
+def num_ok(x, lo, hi):
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and lo <= x <= hi
+
+
+def check_foods(foods, w, errors, warns):
+    if not isinstance(foods, list) or not 1 <= len(foods) <= 25: errors.append(f'{w}: "foods" must be a list of 1-25 foods'); return
+    for i, f in enumerate(foods, 1):
+        fw = f'{w}.foods[{i}]'
+        if not isinstance(f, dict): errors.append(f'{fw} must be an object'); continue
+        if not isinstance(f.get('name'), str) or not f['name'].strip() or len(f['name']) > 80: errors.append(f'{fw}: "name" must be a string up to 80 chars')
+        if 'qty' in f and (not isinstance(f['qty'], str) or len(f['qty']) > 40): errors.append(f'{fw}: "qty" must be a string up to 40 chars (e.g. "200 g")')
+        for k, hi in (('kcal', 10000), ('p', 1000), ('c', 2000), ('f', 1000)):
+            if k in f and not num_ok(f[k], 0, hi): errors.append(f'{fw}: "{k}" must be a number 0-{hi}')
+        if not any(k in f for k in ('p', 'c', 'f')): warns.append(f'{fw}: no macros (p/c/f)')
+        if 'kcal' in f and all(k in f for k in ('p', 'c', 'f')):
+            calc = 4 * f['p'] + 4 * f['c'] + 9 * f['f']
+            if calc and abs(f['kcal'] - calc) > max(40, 0.2 * calc): warns.append(f'{fw}: kcal {f["kcal"]} is far from 4/4/9 of its macros ({round(calc)})')
+        for k in f:
+            if k not in {'name', 'qty', 'kcal', 'p', 'c', 'f'}: warns.append(f'{fw}: unknown key "{k}" (ignored)')
+
+
+def check_meals(meals, errors, warns):
+    if not isinstance(meals, dict): errors.append('"meals" must be an object like {"bulk": {"meals": [...], "groceries": [...]}}'); return 0
+    n = 0
+    for ph, mp in meals.items():
+        w = f'meals.{ph}'
+        if ph not in PHASES: errors.append(f'{w}: unknown phase (use bulk or cut)'); continue
+        if not isinstance(mp, dict): errors.append(f'{w} must be an object'); continue
+        lst = mp.get('meals', [])
+        if not isinstance(lst, list) or len(lst) > 12: errors.append(f'{w}.meals must be a list of up to 12 meals'); lst = []
+        ids = set(); kcal = 0
+        for i, m in enumerate(lst, 1):
+            mw = f'{w}.meals[{i}]'
+            if not isinstance(m, dict): errors.append(f'{mw} must be an object'); continue
+            n += 1
+            if not isinstance(m.get('name'), str) or not m['name'].strip() or len(m['name']) > 60: errors.append(f'{mw}: "name" must be a string up to 60 chars')
+            mid = m.get('id')
+            if mid is not None and (not isinstance(mid, str) or not mid): errors.append(f'{mw}: "id" must be a non-empty string')
+            if mid is None: warns.append(f'{mw}: no "id"; give each meal a stable id so adherence lines up across plan versions')
+            if mid in ids: errors.append(f'{mw}: duplicate id "{mid}"')
+            ids.add(mid)
+            if 'slot' in m and m['slot'] not in MEAL_SLOTS: errors.append(f'{mw}: "slot" must be one of {", ".join(sorted(MEAL_SLOTS))}')
+            if 'time' in m and not (isinstance(m['time'], str) and re.fullmatch(r'\d{1,2}:\d\d', m['time'])): errors.append(f'{mw}: "time" must be "HH:MM"')
+            check_foods(m.get('foods'), mw, errors, warns)
+            if isinstance(m.get('foods'), list):
+                kcal += sum(f.get('kcal', 4 * f.get('p', 0) + 4 * f.get('c', 0) + 9 * f.get('f', 0)) for f in m['foods'] if isinstance(f, dict) and all(num_ok(f.get(k, 0), 0, 10000) for k in ('kcal', 'p', 'c', 'f')))
+            sw = m.get('swaps', [])
+            if not isinstance(sw, list) or len(sw) > 6: errors.append(f'{mw}: "swaps" must be a list of up to 6'); sw = []
+            for j, s_ in enumerate(sw, 1):
+                if not isinstance(s_, dict) or not isinstance(s_.get('name'), str): errors.append(f'{mw}.swaps[{j}]: needs "name" and "foods"'); continue
+                check_foods(s_.get('foods'), f'{mw}.swaps[{j}]', errors, warns)
+            if 'notes' in m and (not isinstance(m['notes'], str) or len(m['notes']) > 300): errors.append(f'{mw}: "notes" must be a string up to 300 chars')
+            for k in m:
+                if k not in {'id', 'name', 'slot', 'time', 'foods', 'swaps', 'notes'}: warns.append(f'{mw}: unknown key "{k}" (ignored)')
+        g = mp.get('groceries', [])
+        if not isinstance(g, list) or len(g) > 80 or not all(isinstance(x, str) and len(x) <= 80 for x in g): errors.append(f'{w}.groceries must be a list of up to 80 strings')
+        print(f'meals.{ph}: {len(lst)} meals, {round(kcal)} kcal/day planned')
+    return n
+
+
+def check_daily(d, errors, warns):
+    if not isinstance(d, dict): errors.append('"daily" must be an object'); return
+    for k in d:
+        if k not in {'cardio', 'targets', 'supplements', 'photoDay'}: warns.append(f'daily: unknown key "{k}" (ignored)')
+    cardio = d.get('cardio', [])
+    if not isinstance(cardio, list) or len(cardio) > 10: errors.append('daily.cardio must be a list of up to 10 sessions'); cardio = []
+    ids = set()
+    for i, c in enumerate(cardio, 1):
+        w = f'daily.cardio[{i}]'
+        if not isinstance(c, dict): errors.append(f'{w} must be an object'); continue
+        if not isinstance(c.get('type'), str) or not c['type'].strip() or len(c['type']) > 60: errors.append(f'{w}: "type" must be a string up to 60 chars (e.g. "Incline walk")')
+        if 'id' not in c: warns.append(f'{w}: no "id"; give it a stable id so ticks line up across plan versions')
+        elif c['id'] in ids: errors.append(f'{w}: duplicate id')
+        ids.add(c.get('id'))
+        if 'minutes' in c and not (isinstance(c['minutes'], int) and not isinstance(c['minutes'], bool) and 1 <= c['minutes'] <= 300): errors.append(f'{w}: "minutes" must be an integer 1-300')
+        days = c.get('days')
+        if days is not None and not (isinstance(days, list) and all(isinstance(x, int) and not isinstance(x, bool) and 0 <= x <= 6 for x in days)): errors.append(f'{w}: "days" must be a list of weekday numbers 0-6 (0 = Sun)')
+        if 'zone' in c and (not isinstance(c['zone'], str) or len(c['zone']) > 30): errors.append(f'{w}: "zone" must be a short string like "Z2" or "120-140 bpm"')
+        if 'notes' in c and (not isinstance(c['notes'], str) or len(c['notes']) > 200): errors.append(f'{w}: "notes" must be a string up to 200 chars')
+        if 'phase' in c and c['phase'] not in PHASES: errors.append(f'{w}: "phase" must be bulk or cut')
+    t = d.get('targets', {})
+    if not isinstance(t, dict): errors.append('daily.targets must be an object'); t = {}
+    for k, lo, hi in (('steps', 1, 100000), ('waterOz', 1, 400), ('sleepHours', 1, 14)):
+        if k in t and t[k] is not None and not num_ok(t[k], lo, hi): errors.append(f'daily.targets.{k} must be a number {lo}-{hi}')
+    for k in t:
+        if k not in {'steps', 'waterOz', 'sleepHours'}: warns.append(f'daily.targets: unknown key "{k}" (ignored)')
+    sup = d.get('supplements', [])
+    if not isinstance(sup, list) or len(sup) > 20: errors.append('daily.supplements must be a list of up to 20'); sup = []
+    for i, s_ in enumerate(sup, 1):
+        w = f'daily.supplements[{i}]'
+        if not isinstance(s_, dict) or not isinstance(s_.get('name'), str) or not s_['name'].strip(): errors.append(f'{w}: needs a "name"'); continue
+        for k, n_ in (('name', 60), ('dose', 40), ('time', 20), ('id', 40)):
+            if k in s_ and (not isinstance(s_[k], str) or len(s_[k]) > n_): errors.append(f'{w}: "{k}" must be a string up to {n_} chars')
+    pd = d.get('photoDay')
+    if pd is not None and not (isinstance(pd, int) and not isinstance(pd, bool) and 0 <= pd <= 6): errors.append('daily.photoDay must be 0-6 (0 = Sun) or null')
 
 
 def main(argv):
@@ -54,7 +182,7 @@ def main(argv):
     if 'message' in plan and not isinstance(plan['message'], str): errors.append('"message" must be a string')
     if len(plan.get('message') or '') > 1000: warns.append('message is long (>1000 chars)')
     for k in plan:
-        if k not in {'schema', 'version', 'updatedAt', 'message', 'phases', 'nutrition', 'options', 'prescriptions'}: warns.append(f'unknown top-level key "{k}" (ignored by the app)')
+        if k not in {'schema', 'version', 'updatedAt', 'message', 'phases', 'nutrition', 'options', 'prescriptions', 'meals', 'daily'}: warns.append(f'unknown top-level key "{k}" (ignored by the app)')
     nut = plan.get('nutrition')
     if nut is not None:
         if not isinstance(nut, dict): errors.append('"nutrition" must be an object like {"bulk": {"kcal":..,"p":..,"c":..,"f":..}}')
@@ -78,6 +206,10 @@ def main(argv):
             data = json.load(f)
         data_ids = {g: {e['id']: e['name'] for e in data.get('exercises', {}).get(g, [])} for g in FOCUSES}
         for g in ARM_HOSTS: data_ids[g] = {**data_ids[g], **data_ids['arms']}  # back/chest may reference Arms exercises
+
+    privacy_scan(plan, 'plan', errors)
+    meal_count = check_meals(plan['meals'], errors, warns) if 'meals' in plan else 0
+    if 'daily' in plan: check_daily(plan['daily'], errors, warns)
 
     rx = plan.get('prescriptions')
     rx_count = 0
