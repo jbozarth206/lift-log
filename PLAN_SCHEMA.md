@@ -8,7 +8,7 @@ bypassing all caches. If `version` is **higher** than the last plan it applied, 
 2. Creates any exercise referenced by a `name` that the user doesn't have yet, and adds it to that group's **All** list.
 3. Shows a dismissible **"Coach updated your plan"** banner on the home screen, with `message` and a summary of the changes.
 
-After an **app update** (app 8.0.1+), the app also re-applies the *current* version once, so keys an older app didn't understand (e.g. `meals`/`daily` applied by a pre-8.0 app, or `daily.supplements[].phase` / `daily.targetsByPhase` applied by a pre-8.1 app) get picked up. It does the same if the plan has `meals`/`daily` but the phone's copy is missing. That re-apply refreshes only the Coach-owned copies (`nutrition`, `prescriptions`, `meals`, `daily`) and leaves `phases` alone, so his manual target edits stay. You don't need to bump `version` to fix that case. A **new** phase block such as `phases.recomp` is applied only when `version` increases.
+After an **app update** (app 8.0.1+), the app also re-applies the *current* version once, so keys an older app didn't understand (e.g. `meals`/`daily` applied by a pre-8.0 app, `daily.supplements[].phase` / `daily.targetsByPhase` applied by a pre-8.1 app, or `schedule` applied by a pre-8.2 app) get picked up. It does the same if the plan has `meals`, `daily`, or `schedule` but the phone's copy is missing. That re-apply refreshes only the Coach-owned copies (`nutrition`, `prescriptions`, `meals`, `daily`, `schedule`) and leaves `phases` alone, so his manual target edits stay. You don't need to bump `version` to fix that case. A **new** phase block such as `phases.recomp` is applied only when `version` increases.
 
 It never deletes logged workouts or exercise IDs. If an exercise is dropped from a focus, its history stays in the Journal and Progress, and it stays under **All**.
 
@@ -227,7 +227,65 @@ Use `recomp` anywhere a phase is allowed:
 
 Built-in rest when an exercise omits `rest`: Body Recomp is 120 s for compounds and 75 s for isolation (between Bulk and Cut). Built-in lists cover all five groups (`back`, `chest`, `legs`, `shoulders`, `arms`), including biceps finishers on Back and triceps finishers on Chest.
 
-Publishing `phases.recomp` still needs a `version` bump. Shipping the app update alone re-applies the current plan's coach-owned copies (`nutrition`, `prescriptions`, `meals`, `daily`) via `coach.appliedByAppVersion` and does not overwrite his phase lists.
+Publishing `phases.recomp` still needs a `version` bump. Shipping the app update alone re-applies the current plan's coach-owned copies (`nutrition`, `prescriptions`, `meals`, `daily`, `schedule`) via `coach.appliedByAppVersion` and does not overwrite his phase lists.
+
+## Additions in app 8.2: `schedule` (optional)
+
+Plans without `schedule` work as before. When a plan includes `schedule`, it **replaces** `coach.schedule` on the phone. Leave the key out to keep the previous schedule. A change shows in the "Coach updated your plan" banner (one line per phase: workout days, rest days, date overrides).
+
+The schedule says what he should train on a given local day. The app resolves **today** (`YYYY-MM-DD` in his timezone, weekday `"0"` = Sunday … `"6"` = Saturday) like this:
+
+1. Use `schedule[<active phase>]` when that block exists (`bulk`, `cut`, or `recomp`). Otherwise use `schedule.default`. If neither is there, use `schedule` itself when it has top-level `days` and/or `dates` (one schedule for every phase).
+2. Inside that block, `dates["YYYY-MM-DD"]` wins over `days["<weekday>"]`. An exact date is how you schedule a makeup or a one-off.
+
+```json
+"schedule": {
+  "recomp": {
+    "days": {
+      "0": {"group": "back", "focus": "upper", "label": "Back (Upper) + Photos", "notes": "Heavy day + weekly check-in"},
+      "1": {"rest": true, "label": "Rest + Walk", "notes": "Work day recovery + 25 min incline walk"},
+      "2": {"group": "shoulders", "focus": "side", "label": "Shoulders (Side) + Calves", "notes": "Short 35–40 min session"},
+      "3": {"group": "arms", "focus": "all", "label": "Arms (Bi/Tri Supersets)"},
+      "4": {"rest": true, "label": "Rest + Walk"},
+      "5": {"group": "legs", "focus": "quads", "label": "Legs (Quads)"},
+      "6": {"group": "chest", "focus": "upper", "label": "Chest (Upper)"}
+    },
+    "dates": {
+      "2026-11-20": {"group": "legs", "focus": "quads", "label": "Legs (Quads) — Makeup"}
+    }
+  },
+  "default": {
+    "days": {"1": {"group": "chest", "focus": "mid", "label": "Chest (Mid)"}}
+  }
+}
+```
+
+Top-level shorthand (every phase, no per-phase blocks):
+
+```json
+"schedule": {
+  "days": {"5": {"group": "legs", "focus": "quads", "label": "Legs (Quads)"}},
+  "dates": {"2026-12-25": {"rest": true, "label": "Holiday"}}
+}
+```
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `schedule.<phase>` | object | no | `bulk`, `cut`, `recomp`, and/or `default`. The active phase's block wins; `default` is the fallback. |
+| `days` | object | one of days/dates | Keys `"0"`–`"6"` (strings). `0` = Sunday. |
+| `dates` | object | one of days/dates | Keys `"YYYY-MM-DD"` (a real calendar date). Beats the weekday for that day. |
+| Workout entry | object | – | `{group, focus, label?, notes?}`. `group` / `focus` are the same keys as `phases` (`all` is allowed). |
+| Rest entry | object | – | `{rest: true, label?, notes?}`. Do not also set `group` or `focus`. |
+| `label` | string ≤60 | no | Shown on the Workout home card and on the workout screen. If omitted, the app uses the group and focus (or "Rest day"). |
+| `notes` | string ≤300 | no | Second line under the label. |
+
+**In the app** (only when he has an active phase):
+
+- Workout home shows a Coach card for today's entry (workout or rest), with the label, notes, and **Done today** if he already logged that `group` + `focus` today. Tapping a workout card opens it. A rest card stays on the home screen; the five body groups underneath still work.
+- If Settings › **Auto-open today's workout** is on (default), launching onto the Workout tab opens today's workout when it is not a rest day and he has not already logged it. Workout home stays under it, so Back (or **Change workout**) returns there. This happens at most once per launch: backing out, changing workouts, or switching tabs does not send him back in. A `plan.json` that arrives a moment after cold launch can still open it once, but only while he is still on the untouched Workout home screen.
+- A finished workout or a rest day leaves him on Workout home so logging food or habits does not pull him back into the workout.
+
+`tools/validate_plan.py` checks phase names, weekday and date keys, group/focus pairs, `rest: true`, label/notes length, and the same `PRIVACY` rules as the rest of the file.
 
 ### Privacy rule (enforced by `tools/validate_plan.py`)
 `plan.json` is served publicly. The validator fails (`PRIVACY` errors) if:

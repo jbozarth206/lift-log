@@ -240,6 +240,23 @@ svg.chart{width:100%;height:auto;display:block;touch-action:pan-y}
 .cb-list{margin:10px 0 0;padding:0 0 0 16px;font-size:13.5px;color:#c9cfdb;line-height:1.55}
 .cb-list b{color:var(--green);font-weight:700}
 .cb-more,.cb-foot{font-size:12px;color:var(--muted);margin-top:6px}
+.coach-day{display:block;width:100%;text-align:left;margin:0 0 12px;padding:14px 16px;border-radius:18px;background:linear-gradient(135deg,color-mix(in srgb,var(--c,#3ddc97) 22%,var(--card)),var(--card) 68%);border:1px solid color-mix(in srgb,var(--c,#3ddc97) 45%,transparent)}
+.coach-day:active{transform:scale(.985)}
+.coach-day.rest{--c:#9aa6bd;background:linear-gradient(135deg,rgba(154,166,189,.18),var(--card) 70%)}
+.coach-day .k{font-size:12px;font-weight:800;letter-spacing:.02em;color:var(--green)}
+.coach-day.rest .k{color:#c5d0e0}
+.coach-day .t{font-size:18px;font-weight:800;letter-spacing:-.02em;margin-top:3px}
+.coach-day .n{font-size:13.5px;color:#c9cfdb;margin-top:4px;line-height:1.35}
+.coach-day .m{font-size:13px;color:var(--muted);margin-top:8px;font-weight:700}
+.coach-day .m b,.coach-day.done .k{color:var(--green)}
+.coach-strip{background:linear-gradient(135deg,rgba(61,220,151,.16),var(--card) 72%);border:1px solid rgba(61,220,151,.4);border-radius:16px;padding:12px 14px;margin-bottom:12px}
+.coach-strip .cs-top{display:flex;align-items:center;gap:8px}
+.coach-strip .cs-k{flex:1;font-size:13px;font-weight:800;color:var(--green)}
+.coach-strip .cs-t{font-size:17px;font-weight:800;margin-top:2px;letter-spacing:-.02em}
+.coach-strip .cs-n,.coach-strip .cs-m{font-size:13.5px;color:#c9cfdb;margin-top:4px;line-height:1.35}
+.coach-strip .cs-m{color:var(--muted);font-size:12.5px}
+.coach-strip .cs-m b{color:var(--green)}
+.coach-strip .text-btn{padding:6px 2px;font-size:15px;white-space:nowrap}
 .coach-note{background:rgba(61,220,151,.08);border:1px solid rgba(61,220,151,.28);border-radius:14px;padding:12px 14px;margin-top:10px;font-size:14.5px;line-height:1.45;color:#dfe4ec}
 .cn-lbl{display:block;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--green);margin-bottom:4px}
 .token-row{gap:8px}

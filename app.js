@@ -9,7 +9,7 @@ const GROUPS = [
   {id:'arms', name:'Arms', color:'#ffc145', icon:'<path d="M5 18c1-5 3-8 6-10l2-3 3 1-1 4c2 1 3 3 3 5 0 2-2 4-5 4H8" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>'}
 ];
 const ARM_HOSTS = ['back', 'chest']; // groups that get arm finishers (biceps on back, triceps on chest)
-const APP_VERSION = '8.1';
+const APP_VERSION = '8.2';
 const SEED_PLAN_VERSION = 1; // plan.json v1 == built-in defaults
 const PHASE_DAYS = 28;
 const PHASES = {
@@ -160,12 +160,13 @@ function syncAll(d){
   }
 }
 const emptyPeds = () => ({compounds: [], doses: [], labs: []});
-const DEFAULT_SETTINGS = {restTimer: true, restSound: true, restVolume: 0.8, restOverride: null};
+const DEFAULT_SETTINGS = {restTimer: true, restSound: true, restVolume: 0.8, restOverride: null, autoOpenWorkout: true};
 function normSettings(x){
   const o = Object.assign({}, DEFAULT_SETTINGS, x && typeof x === 'object' && !Array.isArray(x) ? x : {});
   o.restTimer = o.restTimer !== false; o.restSound = o.restSound !== false;
   o.restVolume = Number.isFinite(+o.restVolume) ? Math.min(1, Math.max(0, +o.restVolume)) : DEFAULT_SETTINGS.restVolume;
   o.restOverride = Number.isFinite(+o.restOverride) && +o.restOverride >= 15 && +o.restOverride <= 900 && o.restOverride !== null ? Math.round(+o.restOverride) : null;
+  o.autoOpenWorkout = o.autoOpenWorkout !== false; // missing = on, so existing v8.1 data opens today's workout
   return o;
 }
 const emptyLabs = () => ({source: null, connectedAt: null, lastSync: null, results: [], reports: {}});
@@ -197,7 +198,7 @@ function stripArms(plan, d){
   return plan;
 }
 function freshDb(){
-  const d = {version: 12, habits: {}, photos: [], exercises: {}, plans: {}, phase: null, coach: {planVersion: SEED_PLAN_VERSION, banner: null}, sessions: [], body: [], profile: {height: null}, peds: emptyPeds(), food: emptyFood(), labs: emptyLabs(), settings: normSettings()};
+  const d = {version: 13, habits: {}, photos: [], exercises: {}, plans: {}, phase: null, coach: {planVersion: SEED_PLAN_VERSION, banner: null}, sessions: [], body: [], profile: {height: null}, peds: emptyPeds(), food: emptyFood(), labs: emptyLabs(), settings: normSettings()};
   for (const g of GROUPS) d.exercises[g.id] = [];
   for (const ph of Object.keys(PHASES)) { d.plans[ph] = {}; for (const g of ['arms', ...GROUPS.map(x => x.id).filter(x => x !== 'arms')]) d.plans[ph][g] = buildPlan(ph, g, d.exercises); }
   return d;
@@ -270,6 +271,12 @@ function migrate(d){
     // Bulk and Cut lists, sessions, exercises, body, food, peds, labs, habits and photos are left in place.
     d.version = 12;
   }
+  if (d.version < 13) {
+    // v13 (app 8.2): auto-open today's Coach workout (settings.autoOpenWorkout, default on).
+    // The weekly schedule itself arrives via plan.json (db.coach.schedule) and is not built here.
+    // Sessions, exercises, Bulk/Cut/Recomp plans, body, food, peds, labs, habits and photos stay as they are.
+    d.version = 13;
+  }
   if (!d.habits || typeof d.habits !== 'object' || Array.isArray(d.habits)) d.habits = {};
   if (!Array.isArray(d.photos)) d.photos = [];
   for (const ph of Object.keys(PHASES)) { d.plans[ph] = d.plans[ph] || {}; for (const g of GROUPS) if (!d.plans[ph][g.id]) d.plans[ph][g.id] = buildPlan(ph, g.id, d.exercises); }
@@ -282,7 +289,7 @@ function load(){
     if (raw) {
       const d = JSON.parse(raw);
       if (d && d.exercises && Array.isArray(d.sessions)) {
-        if (!d.version || d.version < 12) localStorage.setItem(STORE_KEY + '.backup-v' + (d.version || 1), raw); // safety copy before upgrading
+        if (!d.version || d.version < 13) localStorage.setItem(STORE_KEY + '.backup-v' + (d.version || 1), raw); // safety copy before upgrading
         return migrate(d);
       }
     }
@@ -339,6 +346,43 @@ function focusName(gid, fid, fallback){
   const f = FOCUS_META[gid].find(x => x.id === fid);
   return f ? f.name : (fallback || fid);
 }
+/** the phase block Coach scheduled, else "default", else top-level days/dates shorthand */
+function scheduleBlockFor(phase){
+  const s = db.coach && db.coach.schedule;
+  if (!s || typeof s !== 'object') return null;
+  const ok = b => b && typeof b === 'object' && (b.days || b.dates);
+  if (phase && ok(s[phase])) return s[phase];
+  if (ok(s.default)) return s.default;
+  if (s.days || s.dates) return s;
+  return null;
+}
+/** today's entry: dates[YYYY-MM-DD] beats days["0"-"6"] (0 = Sun). null if none. */
+function scheduleEntryFor(date, phase){
+  const block = scheduleBlockFor(phase);
+  if (!block) return null;
+  if (block.dates && block.dates[date]) return block.dates[date];
+  const wd = String(parseDate(date).getDay());
+  return (block.days && block.days[wd]) || null;
+}
+function todaySchedule(){
+  if (!db.phase || !PHASES[db.phase.id]) return null;
+  return scheduleEntryFor(todayStr(), db.phase.id);
+}
+function coachDayLabel(entry){
+  if (!entry) return '';
+  if (entry.label) return entry.label;
+  if (entry.rest) return 'Rest day';
+  const g = groupOf(entry.group), f = focusName(entry.group, entry.focus);
+  if (!g) return 'Workout';
+  return f && f !== 'All' ? `${g.name} (${f})` : g.name;
+}
+/** a saved session today for this group + focus (any phase). Empty sessions don't count. */
+function scheduleLogged(entry, date){
+  if (!entry || entry.rest) return null;
+  const d = date || todayStr();
+  return db.sessions.find(s => s.date === d && s.group === entry.group && fk(s.focus) === fk(entry.focus)
+    && (s.entries || []).some(e => validSets(e.sets || []).length)) || null;
+}
 function sessionLabel(s){ const g = groupOf(s.group), f = focusName(s.group, s.focus, s.focusName); return g.name + (f ? ' · ' + f : ''); }
 const phasePill = ph => ph && PHASES[ph] ? `<span class="pill phase" style="--c:${PHASES[ph].color}">${PHASES[ph].short}</span>` : '';
 const planItems = (gid, fid, phase) => db.plans[phase || curPhase()][gid][!fid || !db.plans[phase || curPhase()][gid][fid] ? 'all' : fid];
@@ -372,12 +416,28 @@ function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add
 let tab = 'workout';
 const stacks = {workout: [{v:'home'}], journal: [{v:'journal'}], track: [{v:'track'}], progress: [{v:'progress'}], settings: [{v:'settings'}]};
 const cur = () => stacks[tab][stacks[tab].length - 1];
-function push(view){ stacks[tab].push(view); render(); window.scrollTo(0, 0); }
-function pop(){ if (stacks[tab].length > 1) { stacks[tab].pop(); render(); } }
+/** one auto-open per launch; any navigation or tap ends the window so a late plan.json can't hijack */
+const launchGate = {consumed: false, touched: false};
+function noteLaunchTouch(){ launchGate.touched = true; }
+document.addEventListener('pointerdown', noteLaunchTouch, true);
+document.addEventListener('click', noteLaunchTouch, true);
+document.addEventListener('keydown', noteLaunchTouch, true);
+function push(view){ noteLaunchTouch(); stacks[tab].push(view); render(); window.scrollTo(0, 0); }
+function pop(){ if (stacks[tab].length > 1) { noteLaunchTouch(); launchGate.consumed = true; stacks[tab].pop(); render(); } }
 function switchTab(t){
+  noteLaunchTouch();
   if (t === tab) stacks[t] = [stacks[t][0]];
   tab = t;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
+  render(); window.scrollTo(0, 0);
+}
+/** leave the scheduled workout for the Workout home screen (pick any group) */
+function changeWorkout(){
+  noteLaunchTouch();
+  launchGate.consumed = true;
+  stacks.workout = [{v:'home'}];
+  tab = 'workout';
+  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === 'workout'));
   render(); window.scrollTo(0, 0);
 }
 document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
@@ -410,6 +470,7 @@ function renderHome(el){
     ${coachBannerHtml()}
     ${photoBannerHtml()}
     <button class="phase-chip" id="phaseChip" style="--c:${ph.color}"><span class="pc-ico">${ph.icon}</span><span class="pc-main"><b>${ph.name}</b><span>${db.phase ? `Week ${Math.min(4, Math.floor(phaseDays() / 7) + 1)} of 4 · ` + ph.tagline + ' · ' + Math.max(0, PHASE_DAYS - phaseDays()) + ' days left' : ''}</span></span><span class="pc-chg">Change</span></button>
+    ${coachDayCardHtml()}
     <div class="hero">
       <div class="stat"><div class="v">${new Set(thisWeek.map(s => s.date)).size}</div><div class="l">Days this week</div></div>
       <div class="stat"><div class="v">${vol >= 10000 ? fmtNum(vol/1000) + 'k' : fmtNum(vol)}</div><div class="l">Lbs lifted (7d)</div></div>
@@ -428,7 +489,43 @@ function renderHome(el){
     </div>`;
   el.querySelectorAll('.group-card').forEach(b => b.addEventListener('click', () => push({v:'focus', g: b.dataset.g, date: todayStr()})));
   $('#phaseChip').onclick = () => push({v:'phase'});
-  bindCoachBanner(); bindPhotoBanner(); bindTodayCard();
+  bindCoachBanner(); bindPhotoBanner(); bindCoachDayCard(); bindTodayCard();
+}
+function coachDayCardHtml(){
+  const entry = todaySchedule();
+  if (!entry) return '';
+  const notes = entry.notes ? `<div class="n">${esc(entry.notes)}</div>` : '';
+  if (entry.rest) return `<div class="coach-day rest" id="coachDayCard">
+      <div class="k">🧠 Coach · Rest day</div>
+      <div class="t">${esc(coachDayLabel(entry))}</div>
+      ${notes}
+      <div class="m">Rest day · you can still train any group below</div>
+    </div>`;
+  const done = scheduleLogged(entry), g = groupOf(entry.group);
+  return `<button class="coach-day ${done ? 'done' : ''}" id="coachDayCard" style="--c:${g ? g.color : 'var(--green)'}">
+      <div class="k">🧠 Coach's workout today</div>
+      <div class="t">${esc(coachDayLabel(entry))}</div>
+      ${notes}
+      <div class="m">${done ? '<b>Done today</b> · tap to view or edit' : 'Tap to start · or pick another group below'}</div>
+    </button>`;
+}
+function bindCoachDayCard(){
+  const b = $('#coachDayCard');
+  if (!b || b.tagName !== 'BUTTON') return;
+  b.onclick = () => {
+    const entry = todaySchedule();
+    if (!entry || entry.rest) return;
+    push({v:'group', g: entry.group, focus: entry.focus, date: todayStr(), phase: db.phase.id, fromCoach: true});
+  };
+}
+function coachStripHtml(entry){
+  const done = scheduleLogged(entry);
+  return `<div class="coach-strip" id="coachWorkoutBanner">
+      <div class="cs-top"><span class="cs-k">🧠 Coach's workout today</span><button class="text-btn" id="changeWorkout" type="button">Change workout</button></div>
+      <div class="cs-t">${esc(coachDayLabel(entry))}</div>
+      ${entry.notes ? `<div class="cs-n">${esc(entry.notes)}</div>` : ''}
+      ${done ? '<div class="cs-m"><b>Done today</b></div>' : '<div class="cs-m">Back or Change workout returns to the workout list</div>'}
+    </div>`;
 }
 
 /* ---------- Workout: Focus picker ---------- */
@@ -465,9 +562,12 @@ function renderGroup(el, v){
   const fname = focusName(g.id, v.focus);
   const session = getSession(v.date, g.id, v.focus, phase);
   const doneIds = new Set(session ? session.entries.filter(e => validSets(e.sets).length).map(e => e.exId) : []);
+  const sched = v.date === todayStr() ? todaySchedule() : null;
+  const coachHere = !!(sched && !sched.rest && sched.group === v.g && sched.focus === (v.focus || 'all'));
   setHeader(fname && fname !== 'All' ? `${g.name} · ${fname}` : g.name, `${PHASES[tp].short} · ` + (v.date === todayStr() ? 'Today' : fmtDay(v.date)) + ` · ${doneIds.size}/${list.length} done`,
     `<button class="text-btn" id="editBtn">${v.editing ? 'Done' : 'Edit'}</button>`);
   el.innerHTML = `
+    ${coachHere ? coachStripHtml(sched) : ''}
     <div class="phase-tip" style="--c:${PHASES[tp].color}">${PHASES[tp].icon} <b>${PHASES[tp].name}:</b> ${PHASES[tp].points[1]}</div>
     <div class="list">
       ${list.map((e, i) => {
@@ -486,6 +586,7 @@ function renderGroup(el, v){
     ${!list.length ? `<div class="empty" style="padding:30px 10px"><p>No exercises in this focus yet. Add one above.</p></div>` : ''}
     ${session && !v.editing ? `<div class="btn-row"><button class="btn small" id="viewSession">View ${v.date === todayStr() ? "today's" : 'this'} session</button></div>` : ''}`;
   $('#editBtn').onclick = () => { v.editing = !v.editing; render(); };
+  if ($('#changeWorkout')) $('#changeWorkout').onclick = changeWorkout;
   $('#addEx').onclick = () => exerciseSheet(g.id, null, v.focus, tp);
   if ($('#viewSession')) $('#viewSession').onclick = () => { switchTab('journal'); push({v:'session', id: session.id}); };
   el.querySelectorAll('.row').forEach(r => r.addEventListener('click', ev => {
@@ -773,6 +874,7 @@ function renderPhase(el, v){
       </button>`).join('')}</div>
     ${db.phase && !expired ? `<div class="btn-row"><button class="btn small" id="restartBlock">Restart ${PHASES[db.phase.id].short} block from today</button></div>` : ''}`;
   const choose = id => {
+    noteLaunchTouch(); // picking a phase is navigation; don't auto-open over the home screen they just reached
     const same = db.phase && db.phase.id === id && !expired;
     if (!same) db.phase = {id, start: todayStr()};
     save();
@@ -998,6 +1100,10 @@ function renderSettings(el){
       <button class="set-item" id="targetsSet"><span class="grow">Nutrition targets<span class="sub">${(() => { const T = foodTargets(); return T.source === 'none' ? 'Not set' : `${T.kcal || '–'} kcal · P ${T.p || '–'} · C ${T.c || '–'} · F ${T.f || '–'} g · ${T.source === 'coach' ? 'from coach' : 'yours'}`; })()}</span></span>›</button>
       <button class="set-item" id="heightSet"><span class="grow">Height<span class="sub">${fmtHeight(db.profile.height)}${db.profile.height ? ' · ' + fmtNum(db.profile.height) + ' in' : ''} · used for BMI</span></span>›</button>
     </div>
+    <div class="section-title">Today's workout</div>
+    <div class="set-group">
+      <button class="set-item" id="autoOpen"><span class="grow">Auto-open today's workout<span class="sub">On launch, open the workout Coach scheduled for today. Back or Change workout returns here.</span></span><span class="tog ${db.settings.autoOpenWorkout ? 'on' : ''}">${db.settings.autoOpenWorkout ? 'On' : 'Off'}</span></button>
+    </div>
     <div class="section-title">Rest timer</div>
     <div class="set-group">
       <button class="set-item" id="rtOn"><span class="grow">Rest timer<span class="sub">Starts when a set has weight and reps · dings at 10 s and at 0</span></span><span class="tog ${db.settings.restTimer ? 'on' : ''}">${db.settings.restTimer ? 'On' : 'Off'}</span></button>
@@ -1032,6 +1138,7 @@ function renderSettings(el){
   bindCoachSettings();
   $('#heightSet').onclick = heightSheet;
   $('#targetsSet').onclick = targetsSheet;
+  $('#autoOpen').onclick = () => { db.settings.autoOpenWorkout = !db.settings.autoOpenWorkout; save(); render(); };
   $('#rtOn').onclick = () => { db.settings.restTimer = !db.settings.restTimer; if (!db.settings.restTimer) Rest.skip(); save(); render(); };
   $('#rtSound').onclick = () => { db.settings.restSound = !db.settings.restSound; save(); render(); };
   $('#rtVol').oninput = ev => { db.settings.restVolume = +ev.target.value / 100; ev.target.closest('.set-item').querySelector('.sub').textContent = ev.target.value + '%'; };
@@ -1627,8 +1734,9 @@ const Coach = {
     db.coach.lastCheck = new Date().toISOString();
     const result = this.apply(plan);
     persist();
+    const opened = maybeAutoOpenWorkout();
     if (manual) toast(result.applied ? 'Plan updated' : 'Plan is up to date');
-    if (result.applied) render();
+    if (result.applied || opened) render();
     return result;
   },
   /** apply a plan object if newer; returns {applied, changes} */
@@ -1641,7 +1749,8 @@ const Coach = {
     // (already applied; keeps any manual target edits) and refreshes only Coach-owned copies, so it is idempotent.
     const reapply = plan.version === pv;
     if (reapply && db.coach.appliedByAppVersion === APP_VERSION
-        && !(plan.meals !== undefined && !db.coach.meals) && !(plan.daily !== undefined && !db.coach.daily)) return {applied: false};
+        && !(plan.meals !== undefined && !db.coach.meals) && !(plan.daily !== undefined && !db.coach.daily)
+        && !(plan.schedule !== undefined && db.coach.schedule == null)) return {applied: false};
     const changes = [];
     let created = 0;
     for (const ph of reapply ? [] : Object.keys(plan.phases || {})) {
@@ -1753,6 +1862,12 @@ const Coach = {
         changes.unshift({where: 'Daily', diffs: [bits.join(' · ') || 'updated']});
       }
       if (d) db.coach.daily = d;
+    }
+    // v8.2: weekly workout schedule. Present = replace the stored copy (like meals/daily). Omitted = leave it.
+    if (plan.schedule !== undefined) {
+      const sch = cleanSchedule(plan.schedule) || {};
+      if (JSON.stringify(sch) !== JSON.stringify(db.coach.schedule || {})) changes.unshift({where: 'Schedule', diffs: [scheduleSummary(sch)]});
+      db.coach.schedule = sch;
     }
     db.coach.appliedByAppVersion = APP_VERSION;
     if (reapply) {
@@ -2363,6 +2478,69 @@ function cleanMeals(m){
   }
   return out;
 }
+function scheduleSummary(sch){
+  const bits = [];
+  const desc = (name, block) => {
+    if (!block) return '';
+    const days = block.days ? Object.values(block.days) : [];
+    const rest = days.filter(e => e.rest).length, lift = days.length - rest;
+    const dates = block.dates ? Object.keys(block.dates).length : 0;
+    return `${name}: ${lift} workout${lift === 1 ? '' : 's'}${rest ? `, ${rest} rest` : ''}${dates ? `, ${dates} date${dates === 1 ? '' : 's'}` : ''}`;
+  };
+  for (const ph of Object.keys(PHASES)) if (sch[ph]) bits.push(desc(PHASES[ph].short, sch[ph]));
+  if (sch.default) bits.push(desc('Default', sch.default));
+  if (sch.days || sch.dates) bits.push(desc('All phases', {days: sch.days, dates: sch.dates}));
+  return bits.join(' · ') || 'cleared';
+}
+function cleanSchedEntry(raw){
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const label = typeof raw.label === 'string' ? raw.label.trim().slice(0, 60) : '';
+  const notes = typeof raw.notes === 'string' ? raw.notes.trim().slice(0, 300) : '';
+  const extra = {};
+  if (label) extra.label = label;
+  if (notes) extra.notes = notes;
+  if (raw.rest === true) return Object.assign({rest: true}, extra);
+  if (!groupOf(raw.group) || !FOCUS_IDS(raw.group).includes(raw.focus)) return null;
+  return Object.assign({group: raw.group, focus: raw.focus}, extra);
+}
+function cleanSchedBlock(block){
+  if (!block || typeof block !== 'object' || Array.isArray(block)) return null;
+  const out = {};
+  if (block.days && typeof block.days === 'object' && !Array.isArray(block.days)) {
+    const days = {};
+    for (const k of Object.keys(block.days)) {
+      if (!/^[0-6]$/.test(k)) continue;
+      const e = cleanSchedEntry(block.days[k]);
+      if (e) days[k] = e;
+    }
+    if (Object.keys(days).length) out.days = days;
+  }
+  if (block.dates && typeof block.dates === 'object' && !Array.isArray(block.dates)) {
+    const dates = {};
+    for (const k of Object.keys(block.dates)) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(k)) continue;
+      const [y, m, d] = k.split('-').map(Number);
+      const dt = new Date(y, m - 1, d);
+      if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) continue;
+      const e = cleanSchedEntry(block.dates[k]);
+      if (e) dates[k] = e;
+    }
+    if (Object.keys(dates).length) out.dates = dates;
+  }
+  return out.days || out.dates ? out : null;
+}
+/** keep valid phase blocks (bulk/cut/recomp/default) and a top-level days/dates shorthand */
+function cleanSchedule(s){
+  if (!s || typeof s !== 'object' || Array.isArray(s)) return null;
+  const out = {};
+  for (const ph of Object.keys(PHASES).concat('default')) {
+    const b = cleanSchedBlock(s[ph]);
+    if (b) out[ph] = b;
+  }
+  const top = cleanSchedBlock({days: s.days, dates: s.dates});
+  if (top) { if (top.days) out.days = top.days; if (top.dates) out.dates = top.dates; }
+  return Object.keys(out).length ? out : null;
+}
 function cleanDaily(d){
   if (!d || typeof d !== 'object' || Array.isArray(d)) return null;
   const cardio = (Array.isArray(d.cardio) ? d.cardio : []).slice(0, 10).map((c, i) => {
@@ -2698,6 +2876,20 @@ function checkPhase(){
   }
   return false;
 }
+/** open today's scheduled workout once, with Workout home underneath so Back returns there */
+function maybeAutoOpenWorkout(){
+  if (launchGate.consumed || launchGate.touched) return false;
+  if (needsPhase() || !db.phase || !PHASES[db.phase.id]) return false;
+  if (tab !== 'workout') return false;
+  if (!db.settings || db.settings.autoOpenWorkout === false) return false;
+  const stack = stacks.workout;
+  if (stack.length !== 1 || stack[0].v !== 'home') return false;
+  const entry = todaySchedule();
+  if (!entry || entry.rest || scheduleLogged(entry)) return false;
+  launchGate.consumed = true;
+  stack.push({v:'group', g: entry.group, focus: entry.focus, date: todayStr(), phase: db.phase.id, fromCoach: true});
+  return true;
+}
 if (needsPhase()) stacks.workout = [{v:'phase'}];
 // returning from MyChart (callback.html) → open Labs and import
 const mcParam = new URLSearchParams(location.search).get('mychart');
@@ -2707,6 +2899,7 @@ if (mcParam) {
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === 'track'));
   if (mcParam === 'connected' && MC() && MC().conn) { db.labs.connectedAt = MC().conn.connectedAt; save(); setTimeout(() => syncLabs(true), 0); }
 }
+maybeAutoOpenWorkout();
 render();
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { checkPhase(); Sync.retryPending(); Coach.check(); maybeAutoSyncLabs(); checkPortalLabs(false); } });
 window.addEventListener('online', () => { Sync.retryPending(); Coach.check(); checkPortalLabs(false); });
