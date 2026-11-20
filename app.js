@@ -9,7 +9,7 @@ const GROUPS = [
   {id:'arms', name:'Arms', color:'#ffc145', icon:'<path d="M5 18c1-5 3-8 6-10l2-3 3 1-1 4c2 1 3 3 3 5 0 2-2 4-5 4H8" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>'}
 ];
 const ARM_HOSTS = ['back', 'chest']; // groups that get arm finishers (biceps on back, triceps on chest)
-const APP_VERSION = '8.0.1';
+const APP_VERSION = '8.1';
 const SEED_PLAN_VERSION = 1; // plan.json v1 == built-in defaults
 const PHASE_DAYS = 28;
 const PHASES = {
@@ -18,7 +18,10 @@ const PHASES = {
     fallback:[4, 6, 8, 150]},
   cut: {id:'cut', name:'Cutting', short:'Cut', color:'#2ec4ff', icon:'🔥',
     tagline:'Lean out, keep muscle', points:['3–4 sets × 10–15 reps, more machines & isolation','Short rest: 45–75 s','Superset isolation moves to keep the pace up'],
-    fallback:[3, 10, 15, 60]}
+    fallback:[3, 10, 15, 60]},
+  recomp: {id:'recomp', name:'Body Recomp', short:'Body Recomp', color:'#d2f34c', icon:'⚖️',
+    tagline:'Build muscle, stay lean', points:['Compounds 4 × 6–12, isolation 3 × 10–15','Moderate rest: ~2 min compounds, ~75 s isolation','Fill the rep range, then add a little weight'],
+    fallback:[4, 8, 12, 90]}
 };
 const FOCUS_META = {
   back: [{id:'upper', name:'Upper', desc:'Lats, traps & rear delts'}, {id:'mid', name:'Mid', desc:'Rhomboids & mid-traps · rows'}, {id:'lower', name:'Lower', desc:'Erectors & posterior chain'}],
@@ -64,6 +67,24 @@ const PLAN_DEFS = {
     arms: {biceps:['EZ-Bar Curl|3|10|12|60','Cable Curl|3|12|15|45','Hammer Curl|3|12|15|45','Concentration Curl|3|12|15|45'],
       triceps:['Rope Pushdown|4|12|15|45','Overhead Cable Extension|3|12|15|45','Skull Crusher|3|10|12|60','Bench Dip|3|12|15|45'],
       forearms:['Wrist Curl|3|15|20|45','Reverse Wrist Curl|3|15|20|45','Reverse Curl|3|12|15|45']}
+  },
+  recomp: {
+    back: {upper:['Pull-Up|4|6|10|120','Lat Pulldown|4|8|12|90','Wide-Grip Seated Row|3|8|12|90','Rear Delt Fly|3|12|15|75','Face Pull|3|12|15|60','arms:Barbell Curl|3|8|12|75','arms:Hammer Curl|3|10|12|60'],
+      mid:['Chest-Supported T-Bar Row|4|6|10|120','Seated Cable Row|3|8|12|90','Single-Arm DB Row|3|8|12|75','Straight-Arm Pulldown|3|12|15|60','arms:EZ-Bar Curl|3|8|12|75','arms:Hammer Curl|3|10|12|60'],
+      lower:['Deadlift|3|5|8|150','Romanian Deadlift|3|8|10|120','Good Morning|3|8|10|90','Back Extension|3|10|15|60','arms:Cable Curl|3|10|15|60','arms:Reverse Curl|3|10|12|60']},
+    chest: {upper:['Incline Bench Press|4|6|10|120','Incline DB Press|3|8|12|90','Low-to-High Cable Fly|3|12|15|60','Landmine Press|3|8|12|75','arms:Close-Grip Bench Press|3|8|10|90','arms:Overhead Cable Extension|3|10|15|60'],
+      mid:['Bench Press|4|6|10|120','DB Bench Press|3|8|12|90','Cable Fly|3|12|15|60','Machine Chest Press|3|10|12|75','arms:Skull Crusher|3|8|12|75','arms:Rope Pushdown|3|10|15|60'],
+      lower:['Dips|4|8|12|90','Decline DB Press|3|8|12|90','High-to-Low Cable Fly|3|12|15|60','Machine Chest Press|3|10|12|75','arms:Skull Crusher|3|10|12|75','arms:Rope Pushdown|3|12|15|60']},
+    legs: {quads:['Back Squat|4|6|10|150','Leg Press|3|10|12|90','Bulgarian Split Squat|3|8|12|75','Leg Extension|3|12|15|60'],
+      hamstrings:['Romanian Deadlift|4|6|10|120','Leg Curl|3|10|15|60','Seated Leg Curl|3|10|15|60','Nordic Curl|3|6|8|75'],
+      glutes:['Hip Thrust|4|8|12|90','Bulgarian Split Squat|3|8|12|75','Walking Lunge|3|10|12|75','Cable Kickback|3|12|15|60'],
+      calves:['Calf Raise|4|10|15|60','Seated Calf Raise|3|12|15|45','Leg Press Calf Raise|3|12|15|45']},
+    shoulders: {front:['Overhead Press|4|6|10|120','Seated DB Press|3|8|12|90','Arnold Press|3|8|12|75','Front Raise|3|12|15|60'],
+      side:['Lateral Raise|4|12|15|60','Cable Lateral Raise|3|12|15|60','Seated DB Press|3|8|12|90','Upright Row|3|10|12|75'],
+      rear:['Face Pull|4|12|15|60','Rear Delt Fly|3|12|15|60','Reverse Pec Deck|3|12|15|60','DB Shrug|3|8|12|75']},
+    arms: {biceps:['Barbell Curl|4|8|12|75','Incline DB Curl|3|10|12|60','Hammer Curl|3|10|12|60','Cable Curl|3|12|15|45'],
+      triceps:['Close-Grip Bench Press|4|6|10|90','Skull Crusher|3|8|12|75','Overhead Cable Extension|3|10|15|60','Rope Pushdown|3|12|15|45'],
+      forearms:['Reverse Curl|3|10|12|60','Wrist Curl|3|12|15|45','Reverse Wrist Curl|3|12|15|45','Hammer Curl|3|10|12|60']}
   }
 };
 /* Exercise names shipped in v1 (a v1 default the user deleted is not re-added during migration) */
@@ -76,11 +97,11 @@ const V1_NAMES = {
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const lc = s => String(s).trim().toLowerCase();
 const parseDef = d => { const [name, sets, min, max, rest] = d.split('|'); return {name, sets: +sets, min: +min, max: +max, rest: +rest}; };
-/* Rest defaults when a plan item has no rest: Bulk compound 165 s, Bulk isolation 90 s, Cut compound 75 s, Cut isolation 60 s */
+/* Rest defaults when a plan item has no rest: Bulk 165/90, Body Recomp 120/75, Cut 75/60 (compound/isolation) */
 const COMPOUND_RE = /squat|deadlift|bench|press|\brows?\b|pull-?up|chin-?up|\bdips?\b|thrust|lunge|rack pull|good morning|clean|snatch/i;
-const DEFAULT_REST = {bulk: {compound: 165, isolation: 90}, cut: {compound: 75, isolation: 60}};
+const DEFAULT_REST = {bulk: {compound: 165, isolation: 90}, cut: {compound: 75, isolation: 60}, recomp: {compound: 120, isolation: 75}};
 const isCompound = name => COMPOUND_RE.test(name || '');
-const defaultRest = (phase, name) => DEFAULT_REST[phase === 'cut' ? 'cut' : 'bulk'][isCompound(name) ? 'compound' : 'isolation'];
+const defaultRest = (phase, name) => (DEFAULT_REST[phase] || DEFAULT_REST.bulk)[isCompound(name) ? 'compound' : 'isolation'];
 /** fallback targets for an exercise with no plan entry in a phase (custom ones keep their own sets/reps) */
 function fallbackItem(phase, ex){
   const [sets, min, max] = PHASES[phase].fallback, rest = defaultRest(phase, ex && ex.name);
@@ -176,7 +197,7 @@ function stripArms(plan, d){
   return plan;
 }
 function freshDb(){
-  const d = {version: 11, habits: {}, photos: [], exercises: {}, plans: {}, phase: null, coach: {planVersion: SEED_PLAN_VERSION, banner: null}, sessions: [], body: [], profile: {height: null}, peds: emptyPeds(), food: emptyFood(), labs: emptyLabs(), settings: normSettings()};
+  const d = {version: 12, habits: {}, photos: [], exercises: {}, plans: {}, phase: null, coach: {planVersion: SEED_PLAN_VERSION, banner: null}, sessions: [], body: [], profile: {height: null}, peds: emptyPeds(), food: emptyFood(), labs: emptyLabs(), settings: normSettings()};
   for (const g of GROUPS) d.exercises[g.id] = [];
   for (const ph of Object.keys(PHASES)) { d.plans[ph] = {}; for (const g of ['arms', ...GROUPS.map(x => x.id).filter(x => x !== 'arms')]) d.plans[ph][g] = buildPlan(ph, g, d.exercises); }
   return d;
@@ -244,6 +265,11 @@ function migrate(d){
     // v11 (app 8.0): daily checklist (habits by date), progress-photo index (images live in the private repo), meal-plan adherence (food.adherence)
     d.version = 11;
   }
+  if (d.version < 12) {
+    // v12 (app 8.1): Body Recomp. The loop below builds plans.recomp (and any other missing phase/group) from defaults.
+    // Bulk and Cut lists, sessions, exercises, body, food, peds, labs, habits and photos are left in place.
+    d.version = 12;
+  }
   if (!d.habits || typeof d.habits !== 'object' || Array.isArray(d.habits)) d.habits = {};
   if (!Array.isArray(d.photos)) d.photos = [];
   for (const ph of Object.keys(PHASES)) { d.plans[ph] = d.plans[ph] || {}; for (const g of GROUPS) if (!d.plans[ph][g.id]) d.plans[ph][g.id] = buildPlan(ph, g.id, d.exercises); }
@@ -256,7 +282,7 @@ function load(){
     if (raw) {
       const d = JSON.parse(raw);
       if (d && d.exercises && Array.isArray(d.sessions)) {
-        if (!d.version || d.version < 11) localStorage.setItem(STORE_KEY + '.backup-v' + (d.version || 1), raw); // safety copy before upgrading
+        if (!d.version || d.version < 12) localStorage.setItem(STORE_KEY + '.backup-v' + (d.version || 1), raw); // safety copy before upgrading
         return migrate(d);
       }
     }
@@ -329,8 +355,8 @@ function sortedSessions(){ return [...db.sessions].sort((a, b) => b.date.localeC
 function exerciseHistory(exId, name){
   const out = [];
   for (const s of db.sessions) for (const en of s.entries)
-    if (en.exId === exId || (!findExercise(en.exId) && en.name === name && name)) {
-      const v = validSets(en.sets); if (v.length) out.push({date: s.date, sets: v, sessionId: s.id});
+      if (en.exId === exId || (!findExercise(en.exId) && en.name === name && name)) {
+      const v = validSets(en.sets); if (v.length) out.push({date: s.date, sets: v, sessionId: s.id, phase: s.phase || null});
     }
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -383,7 +409,7 @@ function renderHome(el){
   el.innerHTML = `
     ${coachBannerHtml()}
     ${photoBannerHtml()}
-    <button class="phase-chip" id="phaseChip" style="--c:${ph.color}"><span class="pc-ico">${ph.icon}</span><span class="pc-main"><b>${phaseLabel()}</b><span>${db.phase ? ph.tagline + ' · ' + Math.max(0, PHASE_DAYS - phaseDays()) + ' days left' : ''}</span></span><span class="pc-chg">Change</span></button>
+    <button class="phase-chip" id="phaseChip" style="--c:${ph.color}"><span class="pc-ico">${ph.icon}</span><span class="pc-main"><b>${ph.name}</b><span>${db.phase ? `Week ${Math.min(4, Math.floor(phaseDays() / 7) + 1)} of 4 · ` + ph.tagline + ' · ' + Math.max(0, PHASE_DAYS - phaseDays()) + ' days left' : ''}</span></span><span class="pc-chg">Change</span></button>
     <div class="hero">
       <div class="stat"><div class="v">${new Set(thisWeek.map(s => s.date)).size}</div><div class="l">Days this week</div></div>
       <div class="stat"><div class="v">${vol >= 10000 ? fmtNum(vol/1000) + 'k' : fmtNum(vol)}</div><div class="l">Lbs lifted (7d)</div></div>
@@ -726,7 +752,7 @@ function exerciseSheet(groupId, e, focusId, phase){
     plan[fid] = plan[fid].filter(i => i.exId !== e.id); save(); closeSheet(); render(); toast('Removed from ' + inFocus.name);
   };
   if ($('#exDel')) $('#exDel').onclick = () => {
-    if (!confirm(`${borrowed ? 'Remove' : 'Delete'} ${e.name} from ${g.name} (both phases, all focuses)? Past entries stay in your Journal.`)) return;
+    if (!confirm(`${borrowed ? 'Remove' : 'Delete'} ${e.name} from ${g.name} (all phases, all focuses)? Past entries stay in your Journal.`)) return;
     if (borrowed) { for (const ph of Object.keys(PHASES)) for (const k of Object.keys(db.plans[ph][groupId])) db.plans[ph][groupId][k] = db.plans[ph][groupId][k].filter(i => i.exId !== e.id); }
     else db.exercises[groupId] = db.exercises[groupId].filter(x => x.id !== e.id);
     syncAll(db); save(); closeSheet(); render(); toast('Deleted');
@@ -898,7 +924,7 @@ function renderLiftProgress(el){
       <div class="stat"><div class="v">${allHist.length}</div><div class="l">Sessions</div></div>
     </div>
     <div class="section-title">History</div>
-    <div class="set-group">${[...allHist].reverse().slice(0, 30).map(h => `<div class="set-item" style="font-weight:500;font-size:15px"><span class="grow">${fmtDay(h.date)}</span><span style="color:var(--muted);font-variant-numeric:tabular-nums;font-size:14px">${esc(setsStr(h.sets))}</span></div>`).join('')}</div>`;
+    <div class="set-group">${[...allHist].reverse().slice(0, 30).map(h => `<div class="set-item" style="font-weight:500;font-size:15px"><span class="grow">${fmtDay(h.date)} ${phasePill(h.phase)}</span><span style="color:var(--muted);font-variant-numeric:tabular-nums;font-size:14px">${esc(setsStr(h.sets))}</span></div>`).join('')}</div>`;
   $('#chartBox').innerHTML = lineChart(pts, groupOf(sel.group).color);
   $('#exSel').onchange = ev => { prog.exId = ev.target.value; render(); };
   el.querySelectorAll('#metricSeg button').forEach(b => b.onclick = () => { prog.metric = b.dataset.k; render(); });
@@ -965,7 +991,7 @@ function renderSettings(el){
   el.innerHTML = `
     <div class="section-title">Training phase</div>
     <div class="set-group">
-      <button class="set-item" id="phaseBtn"><span class="grow">${db.phase ? PHASES[db.phase.id].icon + ' ' + PHASES[db.phase.id].name : 'Not set'}<span class="sub">${db.phase ? phaseLabel() + ' · started ' + fmtDay(db.phase.start) : 'Pick bulking or cutting'} · tap to change</span></span>›</button>
+      <button class="set-item" id="phaseBtn"><span class="grow">${db.phase ? PHASES[db.phase.id].icon + ' ' + PHASES[db.phase.id].name : 'Not set'}<span class="sub">${db.phase ? phaseLabel() + ' · started ' + fmtDay(db.phase.start) : 'Pick Bulk, Cut, or Body Recomp'} · tap to change</span></span>›</button>
     </div>
     <div class="section-title">Profile</div>
     <div class="set-group">
@@ -977,7 +1003,7 @@ function renderSettings(el){
       <button class="set-item" id="rtOn"><span class="grow">Rest timer<span class="sub">Starts when a set has weight and reps · dings at 10 s and at 0</span></span><span class="tog ${db.settings.restTimer ? 'on' : ''}">${db.settings.restTimer ? 'On' : 'Off'}</span></button>
       <button class="set-item" id="rtSound"><span class="grow">Sound<span class="sub">Generated beep · mixes with your music</span></span><span class="tog ${db.settings.restSound ? 'on' : ''}">${db.settings.restSound ? 'On' : 'Off'}</span></button>
       <div class="set-item rt-vol"><span class="grow">Volume<span class="sub">${Math.round(db.settings.restVolume * 100)}%</span></span><input type="range" id="rtVol" min="0" max="100" step="5" value="${Math.round(db.settings.restVolume * 100)}"><button class="mini-btn" id="rtTest">Test</button></div>
-      <div class="set-item"><span class="grow">Rest length<span class="sub">Plan uses each exercise's rest (defaults: Bulk ${DEFAULT_REST.bulk.compound}s compound / ${DEFAULT_REST.bulk.isolation}s isolation · Cut ${DEFAULT_REST.cut.compound}s / ${DEFAULT_REST.cut.isolation}s)</span></span>
+      <div class="set-item"><span class="grow">Rest length<span class="sub">Plan uses each exercise's rest. If rest is omitted: Bulk ${DEFAULT_REST.bulk.compound}/${DEFAULT_REST.bulk.isolation}s · Body Recomp ${DEFAULT_REST.recomp.compound}/${DEFAULT_REST.recomp.isolation}s · Cut ${DEFAULT_REST.cut.compound}/${DEFAULT_REST.cut.isolation}s (compound/isolation)</span></span>
         <select id="rtLen" class="mini-select"><option value="">Plan</option>${[45, 60, 75, 90, 120, 150, 180, 240].map(x => `<option value="${x}" ${db.settings.restOverride === x ? 'selected' : ''}>${restLabel(x)}</option>`).join('')}</select></div>
     </div>
     <p class="note">The timer keeps exact time if you lock the phone, but iPhone can't ding while the screen is locked or Lift Log is in the background; keep the screen on during rest (the countdown shows the right time when you come back). Sound follows the silent switch.</p>
@@ -1113,7 +1139,7 @@ function renderBody(el){
           <div class="meta">${fmtDay(e.date, true)}${BODY_FIELDS.filter(f => f.k !== 'bf' && e[f.k]).map(f => ` · ${f.label} ${fmtNum(e[f.k])}″`).join('')}</div>
           ${e.note ? `<div class="meta body-note">${esc(e.note)}</div>` : ''}</div>
         <svg class="chev" width="20" height="20" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
-      </button>`).join('')}</div>` : `<div class="empty" style="padding:30px 10px"><div class="ico">⚖️</div><p>Log your weight (and optional measurements) to track your bulk or cut.</p></div>`}`;
+      </button>`).join('')}</div>` : `<div class="empty" style="padding:30px 10px"><div class="ico">⚖️</div><p>Log your weight (and optional measurements) to track your bulk, cut, or body recomp.</p></div>`}`;
   $('#addBody').onclick = () => bodySheet(null);
   $('#photosBtn').onclick = () => push({v: 'photos'});
   $('#heightBtn').onclick = heightSheet;
@@ -1720,8 +1746,10 @@ const Coach = {
     if (plan.daily !== undefined) {
       const d = cleanDaily(plan.daily);
       if (d && JSON.stringify(d) !== JSON.stringify(db.coach.daily || null)) {
-        const T = d.targets, bits = [d.cardio.length ? d.cardio.map(c => `${c.type}${c.minutes ? ' ' + c.minutes + ' min' : ''}${c.days.length ? ' ' + c.days.map(x => WEEKDAYS[x]).join('/') : ''}`).join(', ') : '',
-          T.steps ? fmtNum(T.steps) + ' steps' : '', T.waterOz ? T.waterOz + ' oz water' : '', T.sleepHours ? T.sleepHours + ' h sleep' : '', d.supplements.length ? d.supplements.length + ' supplements' : '', d.photoDay != null ? 'photos ' + WEEKDAYS[d.photoDay] : ''].filter(Boolean);
+        const T = d.targets, bits = [d.cardio.length ? d.cardio.map(c => `${c.type}${c.minutes ? ' ' + c.minutes + ' min' : ''}${c.days.length ? ' ' + c.days.map(x => WEEKDAYS[x]).join('/') : ''}${c.phase ? ' (' + PHASES[c.phase].short + ')' : ''}`).join(', ') : '',
+          T.steps ? fmtNum(T.steps) + ' steps' : '', T.waterOz ? T.waterOz + ' oz water' : '', T.sleepHours ? T.sleepHours + ' h sleep' : '',
+          d.targetsByPhase && Object.keys(d.targetsByPhase).length ? 'phase targets ' + Object.keys(d.targetsByPhase).map(ph => PHASES[ph].short).join('/') : '',
+          d.supplements.length ? d.supplements.length + ' supplements' : '', d.photoDay != null ? 'photos ' + WEEKDAYS[d.photoDay] : ''].filter(Boolean);
         changes.unshift({where: 'Daily', diffs: [bits.join(' · ') || 'updated']});
       }
       if (d) db.coach.daily = d;
@@ -2345,9 +2373,27 @@ function cleanDaily(d){
   }).filter(Boolean);
   const t = d.targets && typeof d.targets === 'object' ? d.targets : {};
   const targets = {steps: numIn(t.steps, 1, 100000) != null ? Math.round(t.steps) : null, waterOz: numIn(t.waterOz, 1, 400), sleepHours: numIn(t.sleepHours, 1, 14)};
-  const supplements = (Array.isArray(d.supplements) ? d.supplements : []).slice(0, 20).map((s, i) => !s || !s.name ? null :
-    {id: s.id ? String(s.id).slice(0, 40) : slugId(s.name, i), name: String(s.name).slice(0, 60), dose: s.dose ? String(s.dose).slice(0, 40) : '', time: s.time ? String(s.time).slice(0, 20) : ''}).filter(Boolean);
-  return {cardio, targets, supplements, photoDay: Number.isInteger(d.photoDay) && d.photoDay >= 0 && d.photoDay <= 6 ? d.photoDay : null};
+  const targetsByPhase = {};
+  const tbp = d.targetsByPhase && typeof d.targetsByPhase === 'object' && !Array.isArray(d.targetsByPhase) ? d.targetsByPhase : {};
+  for (const ph of Object.keys(PHASES)) {
+    const src = tbp[ph];
+    if (!src || typeof src !== 'object') continue;
+    const bag = {};
+    const steps = numIn(src.steps, 1, 100000), water = numIn(src.waterOz, 1, 400), sleep = numIn(src.sleepHours, 1, 14);
+    if (steps != null) bag.steps = Math.round(steps);
+    if (water != null) bag.waterOz = water;
+    if (sleep != null) bag.sleepHours = sleep;
+    if (Object.keys(bag).length) targetsByPhase[ph] = bag;
+  }
+  const supplements = (Array.isArray(d.supplements) ? d.supplements : []).slice(0, 20).map((s, i) => {
+    if (!s || !s.name) return null;
+    const item = {id: s.id ? String(s.id).slice(0, 40) : slugId(s.name, i), name: String(s.name).slice(0, 60), dose: s.dose ? String(s.dose).slice(0, 40) : '', time: s.time ? String(s.time).slice(0, 20) : ''};
+    if (PHASES[s.phase]) item.phase = s.phase; // omitted = every phase
+    return item;
+  }).filter(Boolean);
+  const out = {cardio, targets, supplements, photoDay: Number.isInteger(d.photoDay) && d.photoDay >= 0 && d.photoDay <= 6 ? d.photoDay : null};
+  if (Object.keys(targetsByPhase).length) out.targetsByPhase = targetsByPhase;
+  return out;
 }
 
 /* ----- meal plan on Track › Food ----- */
@@ -2417,15 +2463,22 @@ function bindMealPlan(el){
 /* ----- daily checklist ----- */
 let dailyDate = todayStr();
 const dailyPlan = () => db.coach.daily || {cardio: [], targets: {steps: null, waterOz: null, sleepHours: null}, supplements: [], photoDay: null};
+/** daily.targets with per-field overrides from daily.targetsByPhase for the active phase */
+function effectiveTargets(){
+  const P = dailyPlan(), base = P.targets || {}, over = (P.targetsByPhase && P.targetsByPhase[curPhase()]) || {};
+  const pick = k => over[k] != null ? over[k] : (base[k] != null ? base[k] : null);
+  return {steps: pick('steps'), waterOz: pick('waterOz'), sleepHours: pick('sleepHours')};
+}
 function dueCardio(date){ const wd = parseDate(date).getDay(); return dailyPlan().cardio.filter(c => (!c.days.length || c.days.includes(wd)) && (!c.phase || c.phase === curPhase())); }
+function dueSupps(){ return (dailyPlan().supplements || []).filter(s => !s.phase || s.phase === curPhase()); }
 function habitItems(date){
-  const P = dailyPlan(), T = P.targets, h = (db.habits || {})[date] || {};
+  const T = effectiveTargets(), h = (db.habits || {})[date] || {};
   const items = [];
   for (const c of dueCardio(date)) { const v = (h.cardio || {})[c.id] || {}; items.push({key: 'cardio:' + c.id, kind: 'cardio', ico: '🏃', label: c.type, sub: [c.minutes ? c.minutes + ' min' : '', c.zone, c.notes].filter(Boolean).join(' · '), done: !!v.done, c}); }
   items.push({key: 'steps', kind: 'steps', ico: '👟', label: 'Steps', target: T.steps, unit: 'steps', value: h.steps ?? null, done: T.steps ? (h.steps || 0) >= T.steps : h.steps != null});
   items.push({key: 'water', kind: 'water', ico: '💧', label: 'Water', target: T.waterOz, unit: 'oz', value: h.water ?? null, done: T.waterOz ? (h.water || 0) >= T.waterOz : h.water != null});
   items.push({key: 'sleep', kind: 'sleep', ico: '😴', label: 'Sleep', target: T.sleepHours, unit: 'h', value: h.sleep ?? null, done: T.sleepHours ? (h.sleep || 0) >= T.sleepHours : h.sleep != null});
-  for (const s of P.supplements) items.push({key: 'supp:' + s.id, kind: 'supp', ico: '💊', label: s.name, sub: [s.dose, s.time].filter(Boolean).join(' · '), done: !!(h.supps || {})[s.id], s});
+  for (const s of dueSupps()) items.push({key: 'supp:' + s.id, kind: 'supp', ico: '💊', label: s.name, sub: [s.dose, s.time].filter(Boolean).join(' · '), done: !!(h.supps || {})[s.id], s});
   return items;
 }
 /** write one change into db.habits[date] with a snapshot of the day's targets + done/total for Coach */
@@ -2434,8 +2487,8 @@ function setHabit(date, fn){
   const h = db.habits[date] = db.habits[date] || {cardio: {}, supps: {}, steps: null, water: null, sleep: null};
   h.cardio = h.cardio || {}; h.supps = h.supps || {};
   fn(h);
-  const P = dailyPlan(), items = habitItems(date);
-  h.plan = {cardio: dueCardio(date).map(c => ({id: c.id, type: c.type, minutes: c.minutes})), steps: P.targets.steps, waterOz: P.targets.waterOz, sleepHours: P.targets.sleepHours, supps: P.supplements.map(s => s.id)};
+  const T = effectiveTargets(), items = habitItems(date);
+  h.plan = {cardio: dueCardio(date).map(c => ({id: c.id, type: c.type, minutes: c.minutes})), steps: T.steps, waterOz: T.waterOz, sleepHours: T.sleepHours, supps: dueSupps().map(s => s.id)};
   h.done = items.filter(i => i.done).length; h.total = items.length; h.updated = new Date().toISOString();
   save();
 }
@@ -2465,7 +2518,7 @@ function bindTodayCard(){
 }
 function renderDaily(el){
   setHeader('Daily', fmtDay(dailyDate, true));
-  const items = habitItems(dailyDate), done = items.filter(i => i.done).length, P = dailyPlan();
+  const items = habitItems(dailyDate), done = items.filter(i => i.done).length;
   const week = Array.from({length: 7}, (_, k) => dateAdd(dailyDate, k - 6)).map(d => { const h = (db.habits || {})[d]; return {d, pct: h && h.total ? h.done / h.total : null}; });
   const QUICK = {steps: [1000, 2500], water: [8, 16], sleep: [0.5]};
   el.innerHTML = `
@@ -2479,7 +2532,7 @@ function renderDaily(el){
       <div class="main"><div class="name">${i.label}</div><div class="meta">${i.target ? 'Goal ' + fmtNum(i.target) : 'No goal set'}</div></div>
       <input class="hb-in" type="number" inputmode="decimal" min="0" step="any" data-hv="${i.kind}" value="${i.value ?? ''}" placeholder="0"><span class="hb-unit">${i.unit}</span>
       ${QUICK[i.kind].map(q => `<button class="mini-btn" data-hq="${i.kind}" data-q="${q}">+${fmtNum(q)}</button>`).join('')}</div>`).join('')}</div>
-    ${P.supplements.length ? `<div class="section-title">Supplements</div><div class="list">${items.filter(i => i.kind === 'supp').map(i => `<button class="row hb-row ${i.done ? 'done' : ''}" data-hk="${esc(i.key)}"><span class="hb-check">${i.done ? '✓' : ''}</span><div class="main"><div class="name">${esc(i.label)}</div><div class="meta">${esc(i.sub || '')}</div></div></button>`).join('')}</div>` : ''}
+    ${items.some(i => i.kind === 'supp') ? `<div class="section-title">Supplements</div><div class="list">${items.filter(i => i.kind === 'supp').map(i => `<button class="row hb-row ${i.done ? 'done' : ''}" data-hk="${esc(i.key)}"><span class="hb-check">${i.done ? '✓' : ''}</span><div class="main"><div class="name">${esc(i.label)}</div><div class="meta">${esc(i.sub || '')}</div></div></button>`).join('')}</div>` : ''}
     <div class="section-title">Progress photos</div>
     <button class="row" id="dPhotos"><div class="main"><div class="name">📸 Weekly check-in</div><div class="meta">${photoStatusText()}</div></div><svg class="chev" width="20" height="20" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></button>
     <p class="note">Ticks and values sync to Coach by date. Steps are entered by hand (a web app can't read Apple Health).</p>`;
