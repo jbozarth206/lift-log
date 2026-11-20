@@ -12,6 +12,8 @@ Checks:
   - optional "prescriptions": {exerciseId: {sets: [{weight, reps}], note, updated, phase}}
   - optional "meals" (per-phase meal template, swaps, groceries) and "daily"
     (cardio, targets, targetsByPhase, supplements with optional phase, photoDay)
+  - optional "schedule" (per-phase or default weekday/date workout and rest days,
+    or top-level days/dates shorthand)
   - phases are bulk, cut, and recomp
   - PRIVACY: plan.json is PUBLIC. Rejects health keys (peds, labs, photos, habits, body, ...) anywhere,
     and strings that mention PED compounds, lab markers/results or diagnoses
@@ -20,6 +22,7 @@ Checks:
 Exit code 0 = OK to push, 1 = fix the errors first.
 """
 import json, re, subprocess, sys
+from datetime import datetime
 
 PHASES = {'bulk', 'cut', 'recomp'}
 PHASE_MSG = 'bulk, cut, or recomp'
@@ -174,6 +177,105 @@ def check_daily(d, errors, warns):
     if pd is not None and not (isinstance(pd, int) and not isinstance(pd, bool) and 0 <= pd <= 6): errors.append('daily.photoDay must be 0-6 (0 = Sun) or null')
 
 
+SCHED_PHASES = PHASES | {'default'}
+WEEKDAY_KEYS = {'0', '1', '2', '3', '4', '5', '6'}
+
+
+def valid_date_key(s):
+    if not isinstance(s, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', s):
+        return False
+    try:
+        datetime.strptime(s, '%Y-%m-%d')
+    except ValueError:
+        return False
+    return True
+
+
+def check_sched_text(entry, where, errors, warns):
+    if 'label' in entry and (not isinstance(entry['label'], str) or len(entry['label']) > 60):
+        errors.append(f'{where}: "label" must be a string up to 60 chars')
+    if 'notes' in entry and (not isinstance(entry['notes'], str) or len(entry['notes']) > 300):
+        errors.append(f'{where}: "notes" must be a string up to 300 chars')
+
+
+def check_schedule_entry(entry, where, errors, warns):
+    if not isinstance(entry, dict):
+        errors.append(f'{where} must be an object')
+        return 0
+    check_sched_text(entry, where, errors, warns)
+    if entry.get('rest') is True:
+        if 'group' in entry or 'focus' in entry:
+            errors.append(f'{where}: a rest day (rest: true) cannot also set "group" or "focus"')
+        for k in entry:
+            if k not in {'rest', 'label', 'notes'}:
+                warns.append(f'{where}: unknown key "{k}" (ignored)')
+        return 1
+    if 'rest' in entry:
+        errors.append(f'{where}: "rest" must be true for a rest day')
+    group, focus = entry.get('group'), entry.get('focus')
+    if group not in FOCUSES:
+        errors.append(f'{where}: "group" must be one of {", ".join(sorted(FOCUSES))}')
+    elif focus not in FOCUSES[group]:
+        errors.append(f'{where}: "focus" must be one of {", ".join(sorted(FOCUSES[group]))} for group "{group}"')
+    for k in entry:
+        if k not in {'group', 'focus', 'label', 'notes'}:
+            warns.append(f'{where}: unknown key "{k}" (ignored)')
+    return 1
+
+
+def check_schedule_block(block, where, errors, warns):
+    if not isinstance(block, dict):
+        errors.append(f'{where} must be an object with "days" and/or "dates"')
+        return 0
+    n = 0
+    if 'days' not in block and 'dates' not in block:
+        errors.append(f'{where} needs "days" and/or "dates"')
+    days = block.get('days')
+    if 'days' in block:
+        if not isinstance(days, dict):
+            errors.append(f'{where}.days must be an object keyed by weekday "0"-"6" (0 = Sun)')
+        else:
+            for k, entry in days.items():
+                w = f'{where}.days["{k}"]'
+                if k not in WEEKDAY_KEYS:
+                    errors.append(f'{w}: weekday key must be "0"-"6" (0 = Sun)')
+                    continue
+                n += check_schedule_entry(entry, w, errors, warns)
+    dates = block.get('dates')
+    if 'dates' in block:
+        if not isinstance(dates, dict):
+            errors.append(f'{where}.dates must be an object keyed by "YYYY-MM-DD"')
+        else:
+            for k, entry in dates.items():
+                w = f'{where}.dates["{k}"]'
+                if not valid_date_key(k):
+                    errors.append(f'{w}: date key must be a real "YYYY-MM-DD"')
+                    continue
+                n += check_schedule_entry(entry, w, errors, warns)
+    for k in block:
+        if k not in {'days', 'dates'}:
+            warns.append(f'{where}: unknown key "{k}" (ignored)')
+    return n
+
+
+def check_schedule(s, errors, warns):
+    if not isinstance(s, dict):
+        errors.append('"schedule" must be an object (phases bulk/cut/recomp/default, and/or top-level days/dates)')
+        return 0
+    n = 0
+    if 'days' in s or 'dates' in s:
+        top = {k: s[k] for k in ('days', 'dates') if k in s}
+        n += check_schedule_block(top, 'schedule', errors, warns)
+    for k, block in s.items():
+        if k in {'days', 'dates'}:
+            continue
+        if k not in SCHED_PHASES:
+            warns.append(f'schedule: unknown key "{k}" (ignored)')
+            continue
+        n += check_schedule_block(block, f'schedule.{k}', errors, warns)
+    return n
+
+
 def main(argv):
     args = argv[1:]
     path, data_path, prev_path, no_prev = 'plan.json', None, None, False
@@ -200,7 +302,7 @@ def main(argv):
     if 'message' in plan and not isinstance(plan['message'], str): errors.append('"message" must be a string')
     if len(plan.get('message') or '') > 1000: warns.append('message is long (>1000 chars)')
     for k in plan:
-        if k not in {'schema', 'version', 'updatedAt', 'message', 'phases', 'nutrition', 'options', 'prescriptions', 'meals', 'daily'}: warns.append(f'unknown top-level key "{k}" (ignored by the app)')
+        if k not in {'schema', 'version', 'updatedAt', 'message', 'phases', 'nutrition', 'options', 'prescriptions', 'meals', 'daily', 'schedule'}: warns.append(f'unknown top-level key "{k}" (ignored by the app)')
     nut = plan.get('nutrition')
     if nut is not None:
         if not isinstance(nut, dict): errors.append('"nutrition" must be an object like {"bulk": {"kcal":..,"p":..,"c":..,"f":..}} (phases: bulk, cut, recomp)')
@@ -228,6 +330,8 @@ def main(argv):
     privacy_scan(plan, 'plan', errors)
     meal_count = check_meals(plan['meals'], errors, warns) if 'meals' in plan else 0
     if 'daily' in plan: check_daily(plan['daily'], errors, warns)
+    sched_count = check_schedule(plan['schedule'], errors, warns) if 'schedule' in plan else 0
+    if 'schedule' in plan: print(f'schedule: {sched_count} entries')
 
     rx = plan.get('prescriptions')
     rx_count = 0
@@ -330,7 +434,8 @@ def main(argv):
     if errors:
         print(f'\nFAILED: {len(errors)} error(s). Do not push.')
         return 1
-    print(f'OK: plan v{v}, {count} exercise entries, {rx_count} prescriptions. Safe to push.')
+    extra = f', {sched_count} schedule entries' if sched_count else ''
+    print(f'OK: plan v{v}, {count} exercise entries, {rx_count} prescriptions{extra}. Safe to push.')
     return 0
 
 

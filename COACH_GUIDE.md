@@ -22,13 +22,13 @@ gh api 'repos/jbozarth206/lift-log-data/commits?path=data/liftlog.json&per_page=
 ### Data format (same as the app's backup export)
 ```jsonc
 {
-  "app": "liftlog", "appVersion": "8.1",
+  "app": "liftlog", "appVersion": "8.2",
   "exportedAt": "2026-11-11T18:40:00.000Z",      // when the phone pushed it
-  "version": 12,                                  // data schema version (12 = app 8.1, adds plans.recomp)
+  "version": 13,                                  // data schema version (13 = app 8.2, adds settings.autoOpenWorkout; coach.schedule is the phone's copy of plan.json schedule)
   "phase": {"id": "bulk", "start": "2026-11-11"}, // current 4-week block (bulk|cut|recomp), null if not chosen yet
   "exercises": { "back": [{"id": "mhx2k1abcde", "name": "Lat Pulldown"}], "chest": [], "legs": [], "shoulders": [], "arms": [] },
   "plans": { "bulk": { "back": { "upper": [{"exId": "mhx2k1abcde", "sets": 4, "min": 6, "max": 8, "rest": 150, "notes": "…"}], "mid": [], "lower": [], "all": [] } }, "cut": {}, "recomp": {} },
-  "coach": {"planVersion": 1, "planUpdatedAt": null, "lastCheck": "…"},    // which plan.json version the phone has applied
+  "coach": {"planVersion": 1, "planUpdatedAt": null, "lastCheck": "…", "schedule": {}},    // plan version applied; schedule is the phone's copy of plan.json "schedule" (app 8.2+)
   "profile": {"height": 70},                      // inches; null until he sets it
   "body": [                                       // body-metrics log (v5+), any order; sort by date
     {"id": "mwclzbjze0bno", "date": "2026-11-11", "weight": 181.4, "bf": 15.2,
@@ -124,9 +124,10 @@ gh api 'repos/jbozarth206/lift-log-data/commits?path=data/liftlog.json&per_page=
   | `results[].status` | optional string | Present only when not `final` (e.g. `"preliminary"`, `"amended"`, `"corrected"`). |
 
   New results appear only after he opens the app and imports (each MyChart sign-in lasts about an hour, so imports happen when he taps Sync or reconnects). Use `lastSync` to know how fresh the list is. Report lab values factually against the lab's own ranges, and point out anything flagged. Don't diagnose or give dosing advice; suggest he discuss flagged results with his clinician.
-- **Settings** (top-level `settings`, v8 / app 7.1+; treat a missing key as defaults): `{"restTimer": true, "restSound": true, "restVolume": 0.8, "restOverride": null}`. `restOverride` is seconds (15–900) or `null`. When set, he has chosen one rest length for **every** exercise, and it beats your plan `rest`. Mention it if your rest prescriptions matter. The other keys are device preferences you can ignore.
+- **Settings** (top-level `settings`, v8 / app 7.1+; treat a missing key as defaults): `{"restTimer": true, "restSound": true, "restVolume": 0.8, "restOverride": null, "autoOpenWorkout": true}`. `restOverride` is seconds (15–900) or `null`. When set, he has chosen one rest length for **every** exercise, and it beats your plan `rest`. Mention it if your rest prescriptions matter. `autoOpenWorkout` (app 8.2, default `true`) opens today's `schedule` workout on launch when it is not a rest day and he has not already logged it. He can turn it off under Settings › Auto-open today's workout. The other keys are device preferences you can ignore.
 - **Rest timer & plan `rest`**: each plan item's `rest` (seconds) drives the rest countdown on his logging screen (it dings at 10 s left and at 0). Omitted `rest` falls back to Bulk 165 s compound / 90 s isolation, Body Recomp 120 s / 75 s, Cut 75 s / 60 s. `0` = no timer. Timer runs aren't logged, so you can't see actual rest taken.
 - **Body Recomp (app 8.1, phase id `recomp`)**: a third 4-week block. `phase.id` may be `"recomp"`, and sessions logged in it have `phase: "recomp"`. `plans.recomp` holds the same group/focus shape as bulk and cut. Upgrading from v8 / v8.0.1 (data version 11) adds `plans.recomp` from the built-in defaults and keeps workouts, exercises, Bulk/Cut plans, body, food, peds, labs, habits, and photos. The phone saves `liftlog.v1.backup-v11` before that upgrade.
+- **App 8.2 (data version 13)**: adds `settings.autoOpenWorkout` (default `true` when the key is missing) and reads `coach.schedule` from `plan.json`. Upgrading from v8.1 (data version 12) keeps workouts, exercises, Bulk/Cut/Recomp plans, body, food, peds, labs, habits, and photos. The phone saves `liftlog.v1.backup-v12` before that upgrade.
 - **Profile**: `profile.height` is in **inches** (e.g. 70 = 5′10″), or `null` if not set. BMI = `703 × weight / height²`.
 - **Meal-plan logging (app 8.0+)**: food entries logged from your meal plan carry `plan`:
   ```jsonc
@@ -197,13 +198,23 @@ Schemas are in PLAN_SCHEMA.md › "Additions in app 8.0".
 - **`daily`**: `cardio` sessions (type, minutes, `days` 0=Sun…6=Sat, HR `zone`, notes, optional `phase` of `bulk`/`cut`/`recomp`), `targets` (`steps`, `waterOz`, `sleepHours`), optional `targetsByPhase` (`{bulk?, cut?, recomp?}` overriding individual target fields for the active phase; omitted fields fall back to `targets`), `supplements` (name, dose, time, optional `phase` so a generic supplement only shows in that phase; omit `phase` for every phase) and `photoDay` (weekday for the photo check-in). Keep it short; 5–8 daily items is plenty. Review `habits` for done/total by day and adjust targets he consistently misses. `habits.<date>.plan` is the phase-filtered snapshot (cardio due that day, merged targets, supplement ids he actually saw).
 - **Privacy:** plan.json is public. Supplements are fine as a generic checklist (e.g. "Vitamin D3 5,000 IU", "Fish oil"). Never mention PEDs/compounds/doses, lab values or markers, diagnoses, providers or why a supplement was prescribed. `validate_plan.py` rejects these. Put anything health-related in your private message to him instead.
 
+## 2d. Weekly schedule (app 8.2+)
+
+`schedule` is what he trains each day. Schema and validation are in PLAN_SCHEMA.md › "Additions in app 8.2". Put it on the phase he is in (`schedule.recomp` while `phase.id` is `"recomp"`), and add `schedule.default` only if the other phases should share a fallback. A top-level `days` / `dates` object (no phase keys) applies to every phase.
+
+- Weekday keys are strings `"0"` (Sunday) through `"6"` (Saturday). A `dates` entry (`"YYYY-MM-DD"`) replaces that weekday for one day (makeup sessions, travel, a holiday rest).
+- A workout day is `{group, focus, label?, notes?}`. `group` and `focus` must be a real pair (`arms` + `all` is valid). `label` (≤60) is the card title, e.g. `"Back (Upper) + Photos"`. `notes` (≤300) is the one-line why.
+- A rest day is `{"rest": true, "label": "Rest + Walk", "notes": "…"}`. He stays on Workout home and can still open a body group if he decides to lift.
+- On launch, if `settings.autoOpenWorkout` is still true (the default) and today's entry is a workout he has **not** already logged (`sessions` for today with that `group` and `focus`), the app opens that workout with Workout home underneath. Back or **Change workout** leaves it, and it will not open again until the next launch. If he already logged it, or today is `rest: true`, he stays on Workout home and sees the card (marked **Done today** when logged).
+- Include the whole `schedule` you want him to keep. Like `meals` and `daily`, publishing the key **replaces** the phone's copy; leaving it out keeps the old one. The "Coach updated your plan" banner summarizes the new schedule. Same privacy rule: labels and notes are public.
+
 ## 3. Review cadence: every weekday (Mon–Fri)
 
 Coach reviews his data **every weekday, Monday to Friday**. Weekend data is covered by Monday's review. Each review:
 1. Pull `data/liftlog.json`. Check `exportedAt` and the last commit date. If nothing new has synced since the last review, say so and change nothing.
 2. Look at the sessions since the last review: top sets, estimated 1RM, rep targets hit or missed, and arm finishers. Look at the body-weight 7-day average trend against the phase goal, daily food totals against targets (logged days only), the protocol log (doses logged vs planned, any health notes), and any **new lab results** in `labs.results` since the last review (compare each marker with its previous value and the lab's range, and list flagged ones). Report protocol and lab data neutrally.
    Also look at `food.adherence`, `habits` (cardio, steps, water, sleep, supplements) and, weekly, new `photos` check-ins.
-3. **Every review:** refresh `prescriptions` for every exercise in his upcoming sessions (section 2b). Adjust `meals` and `daily` when the data calls for it (section 2c). Bump `version`, validate, and push. This is how he sees what to lift and eat next. If nothing synced since the last review, change nothing.
+3. **Every review:** refresh `prescriptions` for every exercise in his upcoming sessions (section 2b). Adjust `meals` and `daily` when the data calls for it (section 2c). Set `schedule` for the week he is in, including rest days and any `dates` overrides (section 2d), so the phone opens the right workout. Bump `version`, validate, and push. This is how he sees what to lift and eat next. If nothing synced since the last review, change nothing.
 4. If adjustments are warranted, also edit the rest of `plan.json` (exercises, sets/reps/rest, `notes`, `nutrition`) and write a short `message` summarizing the why. Small, specific changes beat full rewrites. Leave out combos you aren't changing.
 
 ## 4. Rules
