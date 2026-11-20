@@ -9,6 +9,7 @@ Checks:
   - version is an integer and is HIGHER than the published one
     (compares with `git show origin/main:plan.json` unless --prev/--no-prev is given)
   - every exercise has a name or id, sets 1-20, reps [min, max] 1-100, rest 0-900 s
+  - optional "demo": a catalog slug, a relative image path, or an https image/gif URL
   - optional "prescriptions": {exerciseId: {sets: [{weight, reps}], note, updated, phase}}
   - optional "meals" (per-phase meal template, swaps, groceries) and "daily"
     (cardio, targets, targetsByPhase, supplements with optional phase, photoDay)
@@ -34,7 +35,7 @@ FOCUSES = {
     'arms': {'biceps', 'triceps', 'forearms', 'all'},
 }
 ARM_HOSTS = {'back', 'chest'}
-ALLOWED_KEYS = {'id', 'name', 'sets', 'reps', 'rest', 'notes', 'arm'}
+ALLOWED_KEYS = {'id', 'name', 'sets', 'reps', 'rest', 'notes', 'arm', 'demo'}
 
 
 MEAL_SLOTS = {'breakfast', 'lunch', 'dinner', 'snack'}
@@ -412,6 +413,19 @@ def main(argv):
                     if 'arm' in it and (not isinstance(it['arm'], bool) or g not in ARM_HOSTS): errors.append(f'{w}: "arm" must be true/false and only on back/chest entries')
                     notes = it.get('notes')
                     if notes is not None and (not isinstance(notes, str) or len(notes) > 400): errors.append(f'{w}: "notes" must be a string up to 400 chars')
+                    demo = it.get('demo')
+                    if demo is not None:
+                        if not isinstance(demo, str) or not demo.strip() or len(demo) > 300:
+                            errors.append(f'{w}: "demo" must be a string up to 300 chars (catalog slug, relative image path, or https URL)')
+                        else:
+                            d = demo.strip()
+                            if '://' in d or d.startswith('//'):
+                                if not d.lower().startswith('https://') or re.search(r'\s', d):
+                                    errors.append(f'{w}: "demo" URL must be https (no spaces)')
+                            elif '..' in d.split('/') or d.startswith('/') or '\\' in d:
+                                errors.append(f'{w}: "demo" path must be relative, with no ".."')
+                            elif not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._~/-]*', d):
+                                errors.append(f'{w}: "demo" must be a slug like "incline-db-press", a relative image path, or an https URL')
 
     if not no_prev and isinstance(v, int):
         prev = None

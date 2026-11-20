@@ -1,6 +1,10 @@
-const CACHE = 'liftlog-v8-2';
-const ASSETS = ['./', './index.html', './styles.css', './app.js', './styles.css?v=82', './app.js?v=82', './mychart.js', './mychart.config.js', './mychart.js?v=82', './mychart.config.js?v=82', './manifest.webmanifest',
+const CACHE = 'liftlog-v8-3';
+const ASSETS = ['./', './index.html', './styles.css', './app.js', './demos.js', './assets/demos/catalog.js',
+  './styles.css?v=83', './app.js?v=83', './demos.js?v=83', './assets/demos/catalog.js?v=83',
+  './mychart.js', './mychart.config.js', './mychart.js?v=83', './mychart.config.js?v=83', './manifest.webmanifest',
   './icons/apple-touch-icon.png', './icons/icon-192.png', './icons/icon-512.png'];
+// Form-demo frames (assets/demos/*.webp) are not precached. The fetch handler below
+// runtime-caches them on first view so a gym with no signal still has the ones already opened.
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS.map(u => new Request(u, {cache: 'reload'})))).then(() => self.skipWaiting()));
 });

@@ -9,7 +9,7 @@ const GROUPS = [
   {id:'arms', name:'Arms', color:'#ffc145', icon:'<path d="M5 18c1-5 3-8 6-10l2-3 3 1-1 4c2 1 3 3 3 5 0 2-2 4-5 4H8" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>'}
 ];
 const ARM_HOSTS = ['back', 'chest']; // groups that get arm finishers (biceps on back, triceps on chest)
-const APP_VERSION = '8.2';
+const APP_VERSION = '8.3';
 const SEED_PLAN_VERSION = 1; // plan.json v1 == built-in defaults
 const PHASE_DAYS = 28;
 const PHASES = {
@@ -277,6 +277,8 @@ function migrate(d){
     // Sessions, exercises, Bulk/Cut/Recomp plans, body, food, peds, labs, habits and photos stay as they are.
     d.version = 13;
   }
+  // App 8.3 adds form demos. They are resolved from the exercise name (and an optional plan `demo`
+  // field) at render time, so the stored log is not migrated and nothing already saved is rewritten.
   if (!d.habits || typeof d.habits !== 'object' || Array.isArray(d.habits)) d.habits = {};
   if (!Array.isArray(d.photos)) d.photos = [];
   for (const ph of Object.keys(PHASES)) { d.plans[ph] = d.plans[ph] || {}; for (const g of GROUPS) if (!d.plans[ph][g.id]) d.plans[ph][g.id] = buildPlan(ph, g.id, d.exercises); }
@@ -422,9 +424,13 @@ function noteLaunchTouch(){ launchGate.touched = true; }
 document.addEventListener('pointerdown', noteLaunchTouch, true);
 document.addEventListener('click', noteLaunchTouch, true);
 document.addEventListener('keydown', noteLaunchTouch, true);
-function push(view){ noteLaunchTouch(); stacks[tab].push(view); render(); window.scrollTo(0, 0); }
-function pop(){ if (stacks[tab].length > 1) { noteLaunchTouch(); launchGate.consumed = true; stacks[tab].pop(); render(); } }
+function push(view){ closeDemo(); noteLaunchTouch(); stacks[tab].push(view); render(); window.scrollTo(0, 0); }
+function pop(){
+  if ($('#demoWrap') && !$('#demoWrap').classList.contains('hidden')) { closeDemo(); return; }
+  if (stacks[tab].length > 1) { noteLaunchTouch(); launchGate.consumed = true; stacks[tab].pop(); render(); }
+}
 function switchTab(t){
+  closeDemo();
   noteLaunchTouch();
   if (t === tab) stacks[t] = [stacks[t][0]];
   tab = t;
@@ -433,6 +439,7 @@ function switchTab(t){
 }
 /** leave the scheduled workout for the Workout home screen (pick any group) */
 function changeWorkout(){
+  closeDemo();
   noteLaunchTouch();
   launchGate.consumed = true;
   stacks.workout = [{v:'home'}];
@@ -450,6 +457,7 @@ function setHeader(title, subtitle = '', action = ''){
   $('#backBtn').classList.toggle('hidden', stacks[tab].length <= 1);
 }
 function render(){
+  stopDemoMotion($('#view'));
   const v = cur(), el = $('#view');
   el.className = 'fade-in'; void el.offsetWidth;
   ({phase: renderPhase, home: renderHome, focus: renderFocus, group: renderGroup, log: renderLog, journal: renderJournal, session: renderSession,
@@ -573,8 +581,9 @@ function renderGroup(el, v){
       ${list.map((e, i) => {
         const last = lastEntry(e.id, v.date + '~');
         const done = doneIds.has(e.id);
+        const demo = resolveDemo(e.name, e.item && e.item.demo);
         return `<div class="row" role="button" data-id="${e.id}" style="--c:${g.color}">
-          <div class="badge-num">${i + 1}</div>
+          <button type="button" class="demo-thumb" data-demo="${esc(e.id)}" aria-label="Form demo for ${esc(e.name)}">${demoVisualHtml(demo)}<span class="badge-num">${i + 1}</span></button>
           <div class="main"><div class="name">${esc(e.name)}</div>
             <div class="meta">${e.item.notes ? '🧠 ' : ''}${e.sets} × ${repsLabel(e)} · rest ${restLabel(e.rest)}${!done ? (() => { const t = setTarget(e, g.id, tp, v.date, (getSession(v.date, g.id, v.focus, phase) || {}).id); return t.src !== 'plan' && t.sets[0] ? ` · ${t.src === 'coach' ? '🧠' : '⚙️'} ${tsetStr(t.sets[0])}` : last ? ` · last ${fmtNum(Math.max(...last.sets.map(s => s.w)))} lb` : ''; })() : ''}</div></div>
           ${v.editing
@@ -585,11 +594,18 @@ function renderGroup(el, v){
     <div class="btn-row"><button class="btn small" id="addEx">＋ Add exercise</button></div>
     ${!list.length ? `<div class="empty" style="padding:30px 10px"><p>No exercises in this focus yet. Add one above.</p></div>` : ''}
     ${session && !v.editing ? `<div class="btn-row"><button class="btn small" id="viewSession">View ${v.date === todayStr() ? "today's" : 'this'} session</button></div>` : ''}`;
+  armDemoMotion(el);
   $('#editBtn').onclick = () => { v.editing = !v.editing; render(); };
   if ($('#changeWorkout')) $('#changeWorkout').onclick = changeWorkout;
   $('#addEx').onclick = () => exerciseSheet(g.id, null, v.focus, tp);
   if ($('#viewSession')) $('#viewSession').onclick = () => { switchTab('journal'); push({v:'session', id: session.id}); };
+  el.querySelectorAll('.demo-thumb').forEach(b => b.addEventListener('click', ev => {
+    ev.stopPropagation();
+    const ex = list.find(x => x.id === b.dataset.demo);
+    if (ex) openDemo(resolveDemo(ex.name, ex.item && ex.item.demo), ex.name);
+  }));
   el.querySelectorAll('.row').forEach(r => r.addEventListener('click', ev => {
+    if (ev.target.closest('.demo-thumb')) return;
     const act = ev.target.closest('[data-act]');
     if (act) {
       ev.stopPropagation();
@@ -688,11 +704,13 @@ function renderLog(el, v){
   const hintFor = i => last && last.sets[i] ? `last ${fmtNum(last.sets[i].w)}×${last.sets[i].r}` : '';
   const anyPre = v.draft.some(d => d.pre);
   const rowVs = i => { const d = v.draft[i], t = tsets[i]; if (!d || !t || d.w === '' || d.r === '') return null; return vsTarget(parseFloat(d.w) || 0, parseInt(d.r) || 0, t); };
+  const demo = resolveDemo(e.name, e.item && e.item.demo);
   const lastFocus = lastSession ? [lastSession.phase && PHASES[lastSession.phase] ? PHASES[lastSession.phase].short : '', focusName(lastSession.group, lastSession.focus, lastSession.focusName)].filter(Boolean).join(' · ') : '';
   const lastLine = last ? last.sets.map(x => `${fmtNum(x.w)}×${x.r}`).join(', ') : '';
   const tTitle = {coach: '🧠 Coach target', auto: '⚙️ Auto target', plan: '🎯 Plan target'}[tgt.src];
   const tSub = tgt.saved ? 'when logged' : tgt.src === 'coach' ? (tgt.updated ? 'set ' + fmtDay(tgt.updated) : 'from Coach') : tgt.src === 'auto' ? 'not Coach · from last session' : `${PHASES[tphase].short} plan`;
   el.innerHTML = `
+    ${demo ? `<button type="button" class="form-strip" id="openDemo">${demoVisualHtml(demo)}<span class="form-copy"><b>Form</b><span>${esc((demo.muscles || []).slice(0, 3).join(' · ') || 'How to do it')}</span></span></button>` : `<div class="form-strip form-none"><span class="demo-thumb static">${DEMO_FALLBACK}</span><span class="form-copy"><b>Form</b><span>No demo for this exercise yet</span></span></div>`}
     <div class="last-card tgt-card tgt-${tgt.src}" style="--c:${tgt.src === 'coach' ? '#3ddc97' : tgt.src === 'auto' ? '#ffc145' : g.color}">
       <div class="lc-head"><span class="lc-title">${tTitle}</span><span class="lc-date">${tSub}</span></div>
       ${tsets.length ? `<div class="lc-sets">${tsets.map((t, i) => `
@@ -721,6 +739,8 @@ function renderLog(el, v){
     <div class="btn-row" style="margin-top:18px"><button class="btn primary" id="saveBtn">${existing ? 'Update' : 'Save'} ${esc(e.name)}</button></div>
     ${existing ? `<div class="btn-row"><button class="btn small danger" id="delEntry">Delete this entry</button></div>` : ''}
     <p class="note">Blank reps count as the target (${e.max}). Sets with no weight or reps are skipped. ${db.settings.restTimer ? `Rest timer (${restLabel(restFor(e, tphase)) || 'off'}) starts when a set has weight and reps; tap the set number to check off a prefilled set.` : ''}</p>`;
+  armDemoMotion(el);
+  if ($('#openDemo')) $('#openDemo').onclick = () => openDemo(demo, e.name);
   const restSecs = restFor(e, tphase);
   /** a set was committed (Done/blur with weight+reps, or checked off) → mark it and start the rest countdown */
   const commitSet = i => {
@@ -789,6 +809,48 @@ function removeEntry(session, exId){
 function openSheet(html){ $('#sheet').innerHTML = '<div class="grab"></div>' + html; $('#sheetWrap').classList.remove('hidden'); }
 function closeSheet(){ $('#sheetWrap').classList.add('hidden'); $('#sheet').innerHTML = ''; }
 $('#sheetBackdrop').addEventListener('click', closeSheet);
+
+/* ---------- Exercise form demo ---------- */
+function closeDemo(){
+  stopDemoMotion($('#demoCard'));
+  const wrap = $('#demoWrap');
+  if (wrap) wrap.classList.add('hidden');
+}
+function openDemo(demo, name){
+  const frames = demo && Array.isArray(demo.frames) ? demo.frames.map(safeDemoSrc).filter(Boolean) : [];
+  if (!frames.length) { toast('No form demo for this exercise yet'); return; }
+  const title = name || demo.name || 'Form';
+  const muscles = (demo.muscles || []).filter(Boolean);
+  const cues = (demo.cues || []).filter(Boolean);
+  const multi = frames.length > 1;
+  $('#demoCard').innerHTML = `
+    <div class="demo-top"><h2 id="demoTitle">${esc(title)}</h2><button type="button" class="demo-x" id="demoClose" aria-label="Close">✕</button></div>
+    <div class="demo-stage">${demoVisualHtml(demo)}</div>
+    ${multi ? `<div class="demo-controls"><button type="button" class="btn small" id="demoPlay">Pause</button><button type="button" class="btn small" id="demoStep">Step</button></div>` : ''}
+    ${muscles.length ? `<div class="demo-muscles">${muscles.map(m => `<span>${esc(m)}</span>`).join('')}</div>` : ''}
+    ${demo.equipment ? `<div class="demo-eq">${esc(demo.equipment)}</div>` : ''}
+    ${cues.length ? `<ul class="demo-cues">${cues.map(c => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}
+    ${demo.note ? `<p class="demo-note">${esc(demo.note)}</p>` : ''}
+    <p class="demo-credit">${esc(DEMO_CATALOG.source.credit)}</p>`;
+  stopDemoMotion($('#demoCard'));
+  $('#demoWrap').classList.remove('hidden');
+  armDemoMotion($('#demoCard'));
+  const vis = $('#demoCard .demo-visual');
+  const play = $('#demoPlay');
+  if (play && vis && !vis.classList.contains('is-playing')) play.textContent = 'Play';
+  $('#demoClose').onclick = closeDemo;
+  if (play) play.onclick = () => {
+    const on = !(vis && vis.classList.contains('is-playing'));
+    setDemoPlaying(vis, on);
+    play.textContent = on ? 'Pause' : 'Play';
+  };
+  if ($('#demoStep')) $('#demoStep').onclick = () => {
+    stepDemo(vis);
+    if (play) play.textContent = 'Play';
+  };
+}
+$('#demoBackdrop').addEventListener('click', closeDemo);
+document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && !$('#demoWrap').classList.contains('hidden')) closeDemo(); });
 function exerciseSheet(groupId, e, focusId, phase){
   phase = phase || curPhase();
   const g = groupOf(groupId), fs = FOCUS_META[groupId], plan = db.plans[phase][groupId], P = PHASES[phase];
@@ -1131,7 +1193,8 @@ function renderSettings(el){
       <div class="set-item" style="font-weight:500"><span class="grow">Workouts logged</span><span style="color:var(--muted)">${db.sessions.length}</span></div>
       <button class="set-item red" id="wipe"><span class="grow">Erase all data</span></button>
     </div>
-    <p class="note">Install: open in Safari → Share → <b>Add to Home Screen</b>. Est. 1RM uses the Epley formula. Version ${APP_VERSION}.</p>`;
+    <p class="note">Install: open in Safari → Share → <b>Add to Home Screen</b>. Est. 1RM uses the Epley formula. Version ${APP_VERSION}.</p>
+    <p class="note">Form demos: <a href="${esc(DEMO_CATALOG.source.url)}" target="_blank" rel="noopener noreferrer">${esc(DEMO_CATALOG.source.name)}</a> (${esc(DEMO_CATALOG.source.license)}). A guide to the movement, not coaching or medical advice.</p>`;
   el.querySelectorAll('[data-g]').forEach(b => b.onclick = () => { switchTab('workout'); push({v:'focus', g: b.dataset.g, date: todayStr()}); });
   $('#exportBtn').onclick = exportData;
   $('#phaseBtn').onclick = () => { switchTab('workout'); push({v:'phase'}); };
@@ -1784,6 +1847,7 @@ const Coach = {
             if (max < min) [min, max] = [max, min];
             const it = {exId: ex.id, sets, min, max, rest: num(p.rest, 0, 900, defaultRest(ph, ex.name))};
             if (p.notes) it.notes = String(p.notes).slice(0, 400);
+            if (typeof p.demo === 'string' && p.demo.trim()) it.demo = String(p.demo).trim().slice(0, 300);
             items.push(it);
           }
           const old = db.plans[ph][gid][fid] || [];
