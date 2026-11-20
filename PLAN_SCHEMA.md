@@ -61,6 +61,7 @@ It never deletes logged workouts or exercise IDs. If an exercise is dropped from
 | `reps` | `[min, max]` ints 1–100 | yes | Target rep range (`[8, 8]` for a fixed number). |
 | `rest` | int seconds 0–900 | optional (recommended) | Rest between sets. Shown next to the target **and drives the in-app rest timer** (app 7.1+), which starts when he commits a set and dings at 10 s left and at 0. `0` = no timer for that exercise (e.g. supersets). If omitted, the app uses its default: Bulk 165 s compound / 90 s isolation, Body Recomp 120 s compound / 75 s isolation, Cut 75 s compound / 60 s isolation (compound = name matches squat, deadlift, bench, press, row, pull-up, chin-up, dip, thrust, lunge, rack pull, good morning, clean, snatch). His own Settings › Rest length override, if set, beats the plan. |
 | `notes` | string ≤400 | no | Coach cue shown on the logging screen for that exercise in that phase and focus. |
+| `demo` | string ≤300 | no | Optional form demo (app 8.3+). A catalog slug such as `incline-db-press`, a relative image path (`assets/demos/foo.webp` or a `.gif`), or an `https://` image/GIF URL. When omitted, the app matches the exercise `name` (and common aliases like "Incline Dumbbell Press") to the built-in demo catalog. Unknown names get a neutral placeholder, never a broken image. |
 
 When the app applies a plan, its targets **replace** any manual edits the user made to that phase · group · focus. Leave a combo out of the file to keep his version.
 Invalid entries are skipped, and an invalid file (wrong `schema`, or a missing or non-integer `version`) is ignored. Still, always run `python3 tools/validate_plan.py` before pushing.
@@ -228,6 +229,18 @@ Use `recomp` anywhere a phase is allowed:
 Built-in rest when an exercise omits `rest`: Body Recomp is 120 s for compounds and 75 s for isolation (between Bulk and Cut). Built-in lists cover all five groups (`back`, `chest`, `legs`, `shoulders`, `arms`), including biceps finishers on Back and triceps finishers on Chest.
 
 Publishing `phases.recomp` still needs a `version` bump. Shipping the app update alone re-applies the current plan's coach-owned copies (`nutrition`, `prescriptions`, `meals`, `daily`, `schedule`) via `coach.appliedByAppVersion` and does not overwrite his phase lists.
+
+## Additions in app 8.3: `demo` (optional)
+
+Each exercise entry may include `demo`. The app shows a looping start→peak form preview on the workout card and a larger sheet (play/pause or step, muscles, cues) when he taps it.
+
+- **Omit `demo`** for anything already in the built-in list. Name matching covers the current plan, including small wording differences (`Incline DB Press` / `Incline Dumbbell Press`). You do not need to set `demo` for those, and you do not need to bump `version` just to turn the pictures on.
+- **Set `demo`** when you invent a lift the catalog would miss, or when you want a specific picture:
+  - a slug from the catalog, e.g. `"demo": "incline-db-press"`
+  - a relative image path in this repo, e.g. `"demo": "assets/demos/custom.webp"`
+  - an `https://` URL of a GIF, WebP, or PNG you are allowed to use
+- A `javascript:` URL, a `http://` URL, or a path with `..` is rejected by `tools/validate_plan.py`. The same `PRIVACY` rules apply to the string.
+- Applying a plan that includes `demo` stores it on that phase · group · focus entry. It does not touch his logged sets.
 
 ## Additions in app 8.2: `schedule` (optional)
 

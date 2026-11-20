@@ -22,7 +22,7 @@ gh api 'repos/jbozarth206/lift-log-data/commits?path=data/liftlog.json&per_page=
 ### Data format (same as the app's backup export)
 ```jsonc
 {
-  "app": "liftlog", "appVersion": "8.2",
+  "app": "liftlog", "appVersion": "8.3",
   "exportedAt": "2026-11-11T18:40:00.000Z",      // when the phone pushed it
   "version": 13,                                  // data schema version (13 = app 8.2, adds settings.autoOpenWorkout; coach.schedule is the phone's copy of plan.json schedule)
   "phase": {"id": "bulk", "start": "2026-11-11"}, // current 4-week block (bulk|cut|recomp), null if not chosen yet
@@ -128,6 +128,7 @@ gh api 'repos/jbozarth206/lift-log-data/commits?path=data/liftlog.json&per_page=
 - **Rest timer & plan `rest`**: each plan item's `rest` (seconds) drives the rest countdown on his logging screen (it dings at 10 s left and at 0). Omitted `rest` falls back to Bulk 165 s compound / 90 s isolation, Body Recomp 120 s / 75 s, Cut 75 s / 60 s. `0` = no timer. Timer runs aren't logged, so you can't see actual rest taken.
 - **Body Recomp (app 8.1, phase id `recomp`)**: a third 4-week block. `phase.id` may be `"recomp"`, and sessions logged in it have `phase: "recomp"`. `plans.recomp` holds the same group/focus shape as bulk and cut. Upgrading from v8 / v8.0.1 (data version 11) adds `plans.recomp` from the built-in defaults and keeps workouts, exercises, Bulk/Cut plans, body, food, peds, labs, habits, and photos. The phone saves `liftlog.v1.backup-v11` before that upgrade.
 - **App 8.2 (data version 13)**: adds `settings.autoOpenWorkout` (default `true` when the key is missing) and reads `coach.schedule` from `plan.json`. Upgrading from v8.1 (data version 12) keeps workouts, exercises, Bulk/Cut/Recomp plans, body, food, peds, labs, habits, and photos. The phone saves `liftlog.v1.backup-v12` before that upgrade.
+- **App 8.3 (still data version 13)**: form demos on every workout card. Nothing in his log changes and no backup is written for this update. Pictures come from the app's catalog by exercise name. An optional `demo` on a plan exercise (slug, relative image, or https URL) overrides that match when you next publish a higher `version`. Schema: PLAN_SCHEMA.md › "Additions in app 8.3". Leave `demo` off for lifts he already has.
 - **Profile**: `profile.height` is in **inches** (e.g. 70 = 5′10″), or `null` if not set. BMI = `703 × weight / height²`.
 - **Meal-plan logging (app 8.0+)**: food entries logged from your meal plan carry `plan`:
   ```jsonc
@@ -172,6 +173,7 @@ Tips:
 - Use the exercise `id` (from the data) for exercises he already logs, so his history stays attached. Use only a `name` for brand-new exercises.
 - Keep each focus at 4–6 exercises. Bulk = heavier compounds (about 4–5 × 4–8, 2–4 min rest). Cut = 3–4 × 10–15, 45–75 s rest, more machines and isolation. Body Recomp = compounds about 4 × 6–12 and isolation 3 × 10–15, rest about 120 s compound / 75 s isolation when you omit `rest`. Publish it under `phases.recomp` (and `nutrition.recomp`, `meals.recomp`) the same way as bulk and cut. The app shows the label **Body Recomp**.
 - `notes` are short cues (≤400 chars) that he sees on the logging screen.
+- `demo` (app 8.3+, optional) pins the form animation for that exercise. Leave it off unless the name would miss the built-in catalog or you want a specific picture. A slug (`"incline-db-press"`), a relative image path, or an `https` GIF/WebP URL. Same public-plan privacy rules. See PLAN_SCHEMA.md.
 - Base progression on his recent top sets and estimated 1RM (Epley: `w × (1 + r/30)`).
 
 ## 2b. Set prescriptions: what he should lift next time (app 7.2+)
