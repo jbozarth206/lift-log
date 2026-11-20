@@ -8,7 +8,7 @@ bypassing all caches. If `version` is **higher** than the last plan it applied, 
 2. Creates any exercise referenced by a `name` that the user doesn't have yet, and adds it to that group's **All** list.
 3. Shows a dismissible **"Coach updated your plan"** banner on the home screen, with `message` and a summary of the changes.
 
-After an **app update** (app 8.0.1+), the app also re-applies the *current* version once, so keys an older app didn't understand (e.g. `meals`/`daily` applied by a pre-8.0 app) get picked up. It does the same if the plan has `meals`/`daily` but the phone's copy is missing. That re-apply refreshes only the Coach-owned copies (`nutrition`, `prescriptions`, `meals`, `daily`) and leaves `phases` alone, so his manual target edits stay. You don't need to bump `version` to fix that case.
+After an **app update** (app 8.0.1+), the app also re-applies the *current* version once, so keys an older app didn't understand (e.g. `meals`/`daily` applied by a pre-8.0 app, or `daily.supplements[].phase` / `daily.targetsByPhase` applied by a pre-8.1 app) get picked up. It does the same if the plan has `meals`/`daily` but the phone's copy is missing. That re-apply refreshes only the Coach-owned copies (`nutrition`, `prescriptions`, `meals`, `daily`) and leaves `phases` alone, so his manual target edits stay. You don't need to bump `version` to fix that case. A **new** phase block such as `phases.recomp` is applied only when `version` increases.
 
 It never deletes logged workouts or exercise IDs. If an exercise is dropped from a focus, its history stays in the Journal and Progress, and it stays under **All**.
 
@@ -42,7 +42,7 @@ It never deletes logged workouts or exercise IDs. If an exercise is dropped from
 | `phases` | object | yes | `phase → group → focus → [exercise]`. |
 
 **Keys**
-- phase: `bulk`, `cut`
+- phase: `bulk`, `cut`, `recomp` (Body Recomp, app 8.1+)
 - group → focus:
   - `back` → `upper`, `mid`, `lower`, `all`
   - `chest` → `upper`, `mid`, `lower`, `all`
@@ -59,7 +59,7 @@ It never deletes logged workouts or exercise IDs. If an exercise is dropped from
 | `name` | string ≤60 | one of id/name | Matched case-insensitively against the user's exercises in that group. If there's no match, a new exercise is created. |
 | `sets` | int 1–20 | yes | Target sets. |
 | `reps` | `[min, max]` ints 1–100 | yes | Target rep range (`[8, 8]` for a fixed number). |
-| `rest` | int seconds 0–900 | optional (recommended) | Rest between sets. Shown next to the target **and drives the in-app rest timer** (app 7.1+), which starts when he commits a set and dings at 10 s left and at 0. `0` = no timer for that exercise (e.g. supersets). If omitted, the app uses its default: Bulk 165 s compound / 90 s isolation, Cut 75 s compound / 60 s isolation (compound = name matches squat, deadlift, bench, press, row, pull-up, chin-up, dip, thrust, lunge, rack pull, good morning, clean, snatch). His own Settings › Rest length override, if set, beats the plan. |
+| `rest` | int seconds 0–900 | optional (recommended) | Rest between sets. Shown next to the target **and drives the in-app rest timer** (app 7.1+), which starts when he commits a set and dings at 10 s left and at 0. `0` = no timer for that exercise (e.g. supersets). If omitted, the app uses its default: Bulk 165 s compound / 90 s isolation, Body Recomp 120 s compound / 75 s isolation, Cut 75 s compound / 60 s isolation (compound = name matches squat, deadlift, bench, press, row, pull-up, chin-up, dip, thrust, lunge, rack pull, good morning, clean, snatch). His own Settings › Rest length override, if set, beats the plan. |
 | `notes` | string ≤400 | no | Coach cue shown on the logging screen for that exercise in that phase and focus. |
 
 When the app applies a plan, its targets **replace** any manual edits the user made to that phase · group · focus. Leave a combo out of the file to keep his version.
@@ -75,7 +75,7 @@ Any plan without these keys works exactly as before. The app keeps its built-in 
 `phases.<phase>.arms.<biceps|triceps|forearms|all>` uses the same exercise-entry format. Arms exercises live in their own group, so a curl keeps **one shared history** whether it's done on Arms day or as a Back finisher.
 
 ### Arm finishers on Back and Chest days
-By default, each `back` focus ends with 1–2 biceps exercises and each `chest` focus ends with 1–2 triceps exercises, in both phases. These are Arms-group exercises used as finishers.
+By default, each `back` focus ends with 1–2 biceps exercises and each `chest` focus ends with 1–2 triceps exercises, in every phase (Bulk, Cut, and Body Recomp). These are Arms-group exercises used as finishers.
 - **If your list for a back/chest focus has no Arms exercise**, the app keeps its current finishers and appends them after your list. Plans written before v6 keep working this way.
 - **To set the finishers yourself**, include them in the list. Use the `id` of an Arms exercise, or a `name` that matches one (e.g. `"Hammer Curl"`), or add `"arm": true` to create a new Arms exercise from a `name`:
   ```json
@@ -93,7 +93,8 @@ By default, each `back` focus ends with 1–2 biceps exercises and each `chest` 
 ```json
 "nutrition": {
   "bulk": {"kcal": 3000, "p": 200, "c": 350, "f": 85},
-  "cut":  {"kcal": 2300, "p": 210, "c": 220, "f": 65}
+  "cut":  {"kcal": 2300, "p": 210, "c": 220, "f": 65},
+  "recomp": {"kcal": 2700, "p": 210, "c": 280, "f": 75}
 }
 ```
 | Field | Unit | Range |
@@ -106,7 +107,7 @@ By default, each `back` focus ends with 1–2 biceps exercises and each `chest` 
 - A change to the targets shows in the update banner.
 
 ## Additions in app 7.1 (rest timer)
-- `rest` (per exercise, seconds) is optional. It now also sets the length of the rest countdown on the logging screen. Omit it to get the phase/type default listed above. Use `0` for exercises that should not start a timer.
+- `rest` (per exercise, seconds) is optional. It now also sets the length of the rest countdown on the logging screen. Omit it to get the phase/type default listed above (Bulk 165/90, Body Recomp 120/75, Cut 75/60, compound/isolation). Use `0` for exercises that should not start a timer.
 - No new top-level keys. Existing plans keep working unchanged.
 
 ## Additions in app 7.2: `prescriptions` (per-exercise set targets)
@@ -130,7 +131,7 @@ Optional top-level object with Coach's exact weight × reps for each set. The lo
 | `sets` | list of 1–20 `{weight, reps}` | yes | One object per set, in order. `weight`: lb 0–2000 (`0` = bodyweight, `null` = his pick, decimals allowed). `reps`: int 1–100. The number of sets you give is the number of rows the app pre-fills. |
 | `note` | string ≤300 | no | Shown under the targets (the why / cue). |
 | `updated` | `"YYYY-MM-DD"` | strongly recommended | The day you published it. Once he has logged that exercise **on or after** this date, the target counts as done and the app falls back to Auto until you publish a new one. Without it, the target keeps showing until replaced. |
-| `phase` | `"bulk"` / `"cut"` | no | Only show this target in that phase. Omit it to show in either phase. |
+| `phase` | `"bulk"` / `"cut"` / `"recomp"` | no | Only show this target in that phase. Omit it to show in every phase. |
 
 Rules:
 - When a plan with `prescriptions` is applied, it **replaces** the whole stored set. An exercise left out has no Coach target any more. Leave the key out entirely to keep the previous set.
@@ -159,12 +160,13 @@ Plans without these keys work as before. When a plan includes `meals` or `daily`
     ],
     "groceries": ["Eggs (2.5 dozen)", "Oats 1 kg", "Chicken breast 1.75 kg"]
   },
-  "cut": {"meals": [], "groceries": []}
+  "cut": {"meals": [], "groceries": []},
+  "recomp": {"meals": [], "groceries": []}
 }
 ```
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `meals.<phase>` | object | – | `bulk` / `cut`. The app shows the plan for his **current** phase. A phase you leave out has no meal plan. |
+| `meals.<phase>` | object | – | `bulk` / `cut` / `recomp`. The app shows the plan for his **current** phase. A phase you leave out has no meal plan. |
 | `.meals[]` | list ≤12 | yes | In display order. |
 | `.id` | string | strongly recommended | Stable id. Logged entries and adherence are keyed by it, so keep it the same across versions. Defaults to a slug of the name. |
 | `.name` | string ≤60 | yes | e.g. "Pre-workout". |
@@ -182,26 +184,50 @@ Plans without these keys work as before. When a plan includes `meals` or `daily`
 "daily": {
   "cardio": [
     {"id": "walk", "type": "Incline walk", "minutes": 25, "days": [1, 2, 3, 4, 5], "zone": "Z2 (120-135 bpm)", "notes": "After lifting"},
-    {"id": "bike", "type": "Bike intervals", "minutes": 15, "days": [6], "zone": "Z4", "phase": "cut"}
+    {"id": "bike", "type": "Bike intervals", "minutes": 15, "days": [6], "zone": "Z4", "phase": "cut"},
+    {"id": "recomp-walk", "type": "Brisk walk", "minutes": 30, "days": [0, 2, 4, 6], "zone": "Z2", "phase": "recomp"}
   ],
   "targets": {"steps": 10000, "waterOz": 128, "sleepHours": 8},
+  "targetsByPhase": {
+    "recomp": {"steps": 12000, "waterOz": 140}
+  },
   "supplements": [
     {"id": "vitd", "name": "Vitamin D3", "dose": "5,000 IU", "time": "AM"},
-    {"id": "fishoil", "name": "Fish oil", "dose": "2 g EPA/DHA"}
+    {"id": "fishoil", "name": "Fish oil", "dose": "2 g EPA/DHA"},
+    {"id": "creatine", "name": "Creatine", "dose": "5 g", "time": "Any", "phase": "recomp"}
   ],
   "photoDay": 0
 }
 ```
 | Field | Type | Meaning |
 |---|---|---|
-| `cardio[]` | list ≤10 | `{id, type ≤60 (required), minutes 1–300, days [0–6] (0 = Sun; empty/omitted = every day), zone ≤30 (e.g. "Z2" or "120-135 bpm"), notes ≤200, phase bulk/cut (optional: only in that phase)}`. Shown as a checklist item on the days it's due. |
+| `cardio[]` | list ≤10 | `{id, type ≤60 (required), minutes 1–300, days [0–6] (0 = Sun; empty/omitted = every day), zone ≤30 (e.g. "Z2" or "120-135 bpm"), notes ≤200, phase bulk/cut/recomp (optional: only in that phase)}`. Shown as a checklist item on the days it's due. |
 | `targets.steps` | int 1–100000 | Daily steps (he types them in; a web app can't read Apple Health). |
 | `targets.waterOz` | number 1–400 | Fluid ounces per day. |
 | `targets.sleepHours` | number 1–14 | Hours per night. |
-| `supplements[]` | list ≤20 | `{id, name ≤60 (required), dose ≤40, time ≤20}`. Daily tick boxes. **Public**: generic names only, no reasons or prescriptions. |
+| `targetsByPhase` | object | Optional per-phase overrides of `targets`. Keys are `bulk`, `cut`, and/or `recomp`. Each value may set `steps`, `waterOz`, and/or `sleepHours` (same ranges). A field you set replaces that field of `targets` while he is in that phase; a field you omit keeps the `targets` value. App 8.1+. |
+| `supplements[]` | list ≤20 | `{id, name ≤60 (required), dose ≤40, time ≤20, phase}`. `phase` is optional `bulk` / `cut` / `recomp` (app 8.1+): only show that item in that phase. Omit `phase` to show it in every phase. Daily tick boxes. **Public**: generic names only, no reasons or prescriptions. |
 | `photoDay` | int 0–6 or null | Weekday for the progress-photo reminder (0 = Sun). With it, the home banner appears on/after that day when the last photos are 7+ days older than that day. Without it, the banner appears once 7+ days have passed since the last photos. |
 
-Give cardio and supplements stable `id`s (ticks are stored by id in `habits`). Ticks and values sync to the private data repo by date (`habits`, see COACH_GUIDE.md).
+Give cardio and supplements stable `id`s (ticks are stored by id in `habits`). Ticks and values sync to the private data repo by date (`habits`, see COACH_GUIDE.md). The habit snapshot stores the targets and supplement ids that were actually due that day (phase-filtered cardio and supplements, and `targetsByPhase` already merged).
+
+## Additions in app 8.1: Body Recomp
+
+`recomp` is a third phase next to `bulk` and `cut`. The display label in the app is **Body Recomp**. Plans that never mention `recomp` keep working: the phone uses its built-in Body Recomp exercise lists until you publish `phases.recomp`.
+
+Use `recomp` anywhere a phase is allowed:
+
+- `phases.recomp.<group>.<focus>`
+- `nutrition.recomp` (`kcal`, `p`, `c`, `f`)
+- `meals.recomp` (`meals`, `groceries`)
+- `prescriptions.<exId>.phase`: `"bulk"` | `"cut"` | `"recomp"` (omit = every phase)
+- `daily.cardio[].phase`: `"bulk"` | `"cut"` | `"recomp"` (omit = every phase)
+- `daily.supplements[].phase`: `"bulk"` | `"cut"` | `"recomp"` (omit = every phase). Phase-specific generic supplements only show in that phase.
+- `daily.targetsByPhase`: `{bulk?: {steps?, waterOz?, sleepHours?}, cut?: {...}, recomp?: {...}}`. Each field you set overrides that field of `daily.targets` for the active phase. Omitted fields fall back to `daily.targets`.
+
+Built-in rest when an exercise omits `rest`: Body Recomp is 120 s for compounds and 75 s for isolation (between Bulk and Cut). Built-in lists cover all five groups (`back`, `chest`, `legs`, `shoulders`, `arms`), including biceps finishers on Back and triceps finishers on Chest.
+
+Publishing `phases.recomp` still needs a `version` bump. Shipping the app update alone re-applies the current plan's coach-owned copies (`nutrition`, `prescriptions`, `meals`, `daily`) via `coach.appliedByAppVersion` and does not overwrite his phase lists.
 
 ### Privacy rule (enforced by `tools/validate_plan.py`)
 `plan.json` is served publicly. The validator fails (`PRIVACY` errors) if:

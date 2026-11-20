@@ -22,12 +22,12 @@ gh api 'repos/jbozarth206/lift-log-data/commits?path=data/liftlog.json&per_page=
 ### Data format (same as the app's backup export)
 ```jsonc
 {
-  "app": "liftlog", "appVersion": "8.0",
+  "app": "liftlog", "appVersion": "8.1",
   "exportedAt": "2026-11-11T18:40:00.000Z",      // when the phone pushed it
-  "version": 11,                                  // data schema version
-  "phase": {"id": "bulk", "start": "2026-11-11"}, // current 4-week block (bulk|cut), null if not chosen yet
+  "version": 12,                                  // data schema version (12 = app 8.1, adds plans.recomp)
+  "phase": {"id": "bulk", "start": "2026-11-11"}, // current 4-week block (bulk|cut|recomp), null if not chosen yet
   "exercises": { "back": [{"id": "mhx2k1abcde", "name": "Lat Pulldown"}], "chest": [], "legs": [], "shoulders": [], "arms": [] },
-  "plans": { "bulk": { "back": { "upper": [{"exId": "mhx2k1abcde", "sets": 4, "min": 6, "max": 8, "rest": 150, "notes": "…"}], "mid": [], "lower": [], "all": [] } }, "cut": {} },
+  "plans": { "bulk": { "back": { "upper": [{"exId": "mhx2k1abcde", "sets": 4, "min": 6, "max": 8, "rest": 150, "notes": "…"}], "mid": [], "lower": [], "all": [] } }, "cut": {}, "recomp": {} },
   "coach": {"planVersion": 1, "planUpdatedAt": null, "lastCheck": "…"},    // which plan.json version the phone has applied
   "profile": {"height": 70},                      // inches; null until he sets it
   "body": [                                       // body-metrics log (v5+), any order; sort by date
@@ -125,7 +125,8 @@ gh api 'repos/jbozarth206/lift-log-data/commits?path=data/liftlog.json&per_page=
 
   New results appear only after he opens the app and imports (each MyChart sign-in lasts about an hour, so imports happen when he taps Sync or reconnects). Use `lastSync` to know how fresh the list is. Report lab values factually against the lab's own ranges, and point out anything flagged. Don't diagnose or give dosing advice; suggest he discuss flagged results with his clinician.
 - **Settings** (top-level `settings`, v8 / app 7.1+; treat a missing key as defaults): `{"restTimer": true, "restSound": true, "restVolume": 0.8, "restOverride": null}`. `restOverride` is seconds (15–900) or `null`. When set, he has chosen one rest length for **every** exercise, and it beats your plan `rest`. Mention it if your rest prescriptions matter. The other keys are device preferences you can ignore.
-- **Rest timer & plan `rest`**: each plan item's `rest` (seconds) drives the rest countdown on his logging screen (it dings at 10 s left and at 0). Omitted `rest` falls back to Bulk 165 s compound / 90 s isolation, Cut 75 s / 60 s. `0` = no timer. Timer runs aren't logged, so you can't see actual rest taken.
+- **Rest timer & plan `rest`**: each plan item's `rest` (seconds) drives the rest countdown on his logging screen (it dings at 10 s left and at 0). Omitted `rest` falls back to Bulk 165 s compound / 90 s isolation, Body Recomp 120 s / 75 s, Cut 75 s / 60 s. `0` = no timer. Timer runs aren't logged, so you can't see actual rest taken.
+- **Body Recomp (app 8.1, phase id `recomp`)**: a third 4-week block. `phase.id` may be `"recomp"`, and sessions logged in it have `phase: "recomp"`. `plans.recomp` holds the same group/focus shape as bulk and cut. Upgrading from v8 / v8.0.1 (data version 11) adds `plans.recomp` from the built-in defaults and keeps workouts, exercises, Bulk/Cut plans, body, food, peds, labs, habits, and photos. The phone saves `liftlog.v1.backup-v11` before that upgrade.
 - **Profile**: `profile.height` is in **inches** (e.g. 70 = 5′10″), or `null` if not set. BMI = `703 × weight / height²`.
 - **Meal-plan logging (app 8.0+)**: food entries logged from your meal plan carry `plan`:
   ```jsonc
@@ -168,7 +169,7 @@ The phone applies it the next time the app opens or comes back online, and shows
 
 Tips:
 - Use the exercise `id` (from the data) for exercises he already logs, so his history stays attached. Use only a `name` for brand-new exercises.
-- Keep each focus at 4–6 exercises. Bulk = heavier compounds (about 4–5 × 4–8, 2–4 min rest). Cut = 3–4 × 10–15, 45–75 s rest, more machines and isolation.
+- Keep each focus at 4–6 exercises. Bulk = heavier compounds (about 4–5 × 4–8, 2–4 min rest). Cut = 3–4 × 10–15, 45–75 s rest, more machines and isolation. Body Recomp = compounds about 4 × 6–12 and isolation 3 × 10–15, rest about 120 s compound / 75 s isolation when you omit `rest`. Publish it under `phases.recomp` (and `nutrition.recomp`, `meals.recomp`) the same way as bulk and cut. The app shows the label **Body Recomp**.
 - `notes` are short cues (≤400 chars) that he sees on the logging screen.
 - Base progression on his recent top sets and estimated 1RM (Epley: `w × (1 + r/30)`).
 
@@ -182,9 +183,10 @@ How to compute them from the synced history:
    - Within the range → same weight, +1 rep on the sets that fell short (double progression).
    - Missed `min` on 2+ sets, or 2 sessions in a row with no progress → hold, or cut ~5–10% and rebuild. Say why in `note`.
    - On a **cut**, aim to hold load and reps rather than add. Prescribe the last top weight for the bottom of the range and accept small rep drops.
+   - On **Body Recomp**, progress reps inside the range first, then add a small load. Don't push a surplus-sized jump.
    - Check `target` on the last entries: if he keeps missing your targets, you're progressing too fast.
 3. Give one `{weight, reps}` per set, matching the plan's `sets` count. Use `weight: 0` for bodyweight and `null` to let him pick the load. Round to loads he can actually use (2.5/5 lb plates, 5 lb dumbbell steps).
-4. Set `updated` to today's date (`YYYY-MM-DD`). After he logs the exercise on or after that date, the app treats your target as done and shows Auto until your next review. Add `phase` if a target only applies to bulk or cut.
+4. Set `updated` to today's date (`YYYY-MM-DD`). After he logs the exercise on or after that date, the app treats your target as done and shows Auto until your next review. Add `phase` (`"bulk"`, `"cut"`, or `"recomp"`) if a target only applies to one phase. Omit `phase` to show it in every phase.
 5. `prescriptions` **replaces** the whole stored set each time. Include every exercise you want a Coach target on, not only the changed ones. Leave the key out entirely to keep the previous set.
 6. Bump `version` (the app ignores the file otherwise), validate with `python3 tools/validate_plan.py --data liftlog.json` (it checks every key matches an exercise id), and push.
 
@@ -192,7 +194,7 @@ How to compute them from the synced history:
 Schemas are in PLAN_SCHEMA.md › "Additions in app 8.0".
 - **`meals`**: per-phase daily template. Build it from his `nutrition` targets: the meal totals should land within about ±5% of `kcal` and `p`. Give every meal a stable `id` (adherence is keyed by it) and a `slot` (breakfast/lunch/dinner/snack = where it lands in his food log). Use foods he actually logs (check `food.entries`/`food.favorites`), realistic quantities, and 1–2 `swaps` for meals he skips or edits often. Keep `groceries` to a short weekly list. Each food needs `kcal`/`p`/`c`/`f`; the app sums meals and the day for him.
 - Use `food.adherence` to adjust: meals that are often `missed` or `edited` need a different food, size or time, not a lecture. Compare `actual` with `planned` and the weight trend before changing calories.
-- **`daily`**: `cardio` sessions (type, minutes, `days` 0=Sun…6=Sat, HR `zone`, notes, optional `phase`), `targets` (`steps`, `waterOz`, `sleepHours`), `supplements` (name, dose, time) and `photoDay` (weekday for the photo check-in). Keep it short; 5–8 daily items is plenty. Review `habits` for done/total by day and adjust targets he consistently misses.
+- **`daily`**: `cardio` sessions (type, minutes, `days` 0=Sun…6=Sat, HR `zone`, notes, optional `phase` of `bulk`/`cut`/`recomp`), `targets` (`steps`, `waterOz`, `sleepHours`), optional `targetsByPhase` (`{bulk?, cut?, recomp?}` overriding individual target fields for the active phase; omitted fields fall back to `targets`), `supplements` (name, dose, time, optional `phase` so a generic supplement only shows in that phase; omit `phase` for every phase) and `photoDay` (weekday for the photo check-in). Keep it short; 5–8 daily items is plenty. Review `habits` for done/total by day and adjust targets he consistently misses. `habits.<date>.plan` is the phase-filtered snapshot (cardio due that day, merged targets, supplement ids he actually saw).
 - **Privacy:** plan.json is public. Supplements are fine as a generic checklist (e.g. "Vitamin D3 5,000 IU", "Fish oil"). Never mention PEDs/compounds/doses, lab values or markers, diagnoses, providers or why a supplement was prescribed. `validate_plan.py` rejects these. Put anything health-related in your private message to him instead.
 
 ## 3. Review cadence: every weekday (Mon–Fri)

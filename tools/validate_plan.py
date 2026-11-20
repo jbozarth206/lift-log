@@ -10,7 +10,9 @@ Checks:
     (compares with `git show origin/main:plan.json` unless --prev/--no-prev is given)
   - every exercise has a name or id, sets 1-20, reps [min, max] 1-100, rest 0-900 s
   - optional "prescriptions": {exerciseId: {sets: [{weight, reps}], note, updated, phase}}
-  - optional "meals" (per-phase meal template, swaps, groceries) and "daily" (cardio, targets, supplements, photoDay)
+  - optional "meals" (per-phase meal template, swaps, groceries) and "daily"
+    (cardio, targets, targetsByPhase, supplements with optional phase, photoDay)
+  - phases are bulk, cut, and recomp
   - PRIVACY: plan.json is PUBLIC. Rejects health keys (peds, labs, photos, habits, body, ...) anywhere,
     and strings that mention PED compounds, lab markers/results or diagnoses
   - with --data: every "id" exists in that body group in the user's synced data,
@@ -19,7 +21,8 @@ Exit code 0 = OK to push, 1 = fix the errors first.
 """
 import json, re, subprocess, sys
 
-PHASES = {'bulk', 'cut'}
+PHASES = {'bulk', 'cut', 'recomp'}
+PHASE_MSG = 'bulk, cut, or recomp'
 FOCUSES = {
     'back': {'upper', 'mid', 'lower', 'all'},
     'chest': {'upper', 'mid', 'lower', 'all'},
@@ -81,11 +84,11 @@ def check_foods(foods, w, errors, warns):
 
 
 def check_meals(meals, errors, warns):
-    if not isinstance(meals, dict): errors.append('"meals" must be an object like {"bulk": {"meals": [...], "groceries": [...]}}'); return 0
+    if not isinstance(meals, dict): errors.append('"meals" must be an object like {"bulk": {"meals": [...], "groceries": [...]}} (phases: bulk, cut, recomp)'); return 0
     n = 0
     for ph, mp in meals.items():
         w = f'meals.{ph}'
-        if ph not in PHASES: errors.append(f'{w}: unknown phase (use bulk or cut)'); continue
+        if ph not in PHASES: errors.append(f'{w}: unknown phase (use {PHASE_MSG})'); continue
         if not isinstance(mp, dict): errors.append(f'{w} must be an object'); continue
         lst = mp.get('meals', [])
         if not isinstance(lst, list) or len(lst) > 12: errors.append(f'{w}.meals must be a list of up to 12 meals'); lst = []
@@ -119,10 +122,18 @@ def check_meals(meals, errors, warns):
     return n
 
 
+def check_target_bag(t, where, errors, warns):
+    if not isinstance(t, dict): errors.append(f'{where} must be an object'); return
+    for k, lo, hi in (('steps', 1, 100000), ('waterOz', 1, 400), ('sleepHours', 1, 14)):
+        if k in t and t[k] is not None and not num_ok(t[k], lo, hi): errors.append(f'{where}.{k} must be a number {lo}-{hi}')
+    for k in t:
+        if k not in {'steps', 'waterOz', 'sleepHours'}: warns.append(f'{where}: unknown key "{k}" (ignored)')
+
+
 def check_daily(d, errors, warns):
     if not isinstance(d, dict): errors.append('"daily" must be an object'); return
     for k in d:
-        if k not in {'cardio', 'targets', 'supplements', 'photoDay'}: warns.append(f'daily: unknown key "{k}" (ignored)')
+        if k not in {'cardio', 'targets', 'targetsByPhase', 'supplements', 'photoDay'}: warns.append(f'daily: unknown key "{k}" (ignored)')
     cardio = d.get('cardio', [])
     if not isinstance(cardio, list) or len(cardio) > 10: errors.append('daily.cardio must be a list of up to 10 sessions'); cardio = []
     ids = set()
@@ -138,13 +149,17 @@ def check_daily(d, errors, warns):
         if days is not None and not (isinstance(days, list) and all(isinstance(x, int) and not isinstance(x, bool) and 0 <= x <= 6 for x in days)): errors.append(f'{w}: "days" must be a list of weekday numbers 0-6 (0 = Sun)')
         if 'zone' in c and (not isinstance(c['zone'], str) or len(c['zone']) > 30): errors.append(f'{w}: "zone" must be a short string like "Z2" or "120-140 bpm"')
         if 'notes' in c and (not isinstance(c['notes'], str) or len(c['notes']) > 200): errors.append(f'{w}: "notes" must be a string up to 200 chars')
-        if 'phase' in c and c['phase'] not in PHASES: errors.append(f'{w}: "phase" must be bulk or cut')
+        if 'phase' in c and c['phase'] not in PHASES: errors.append(f'{w}: "phase" must be {PHASE_MSG}')
     t = d.get('targets', {})
     if not isinstance(t, dict): errors.append('daily.targets must be an object'); t = {}
-    for k, lo, hi in (('steps', 1, 100000), ('waterOz', 1, 400), ('sleepHours', 1, 14)):
-        if k in t and t[k] is not None and not num_ok(t[k], lo, hi): errors.append(f'daily.targets.{k} must be a number {lo}-{hi}')
-    for k in t:
-        if k not in {'steps', 'waterOz', 'sleepHours'}: warns.append(f'daily.targets: unknown key "{k}" (ignored)')
+    check_target_bag(t, 'daily.targets', errors, warns)
+    tbp = d.get('targetsByPhase')
+    if tbp is not None:
+        if not isinstance(tbp, dict): errors.append('daily.targetsByPhase must be an object like {"recomp": {"steps": 12000}}')
+        else:
+            for ph, tv in tbp.items():
+                if ph not in PHASES: errors.append(f'daily.targetsByPhase.{ph}: unknown phase (use {PHASE_MSG})'); continue
+                check_target_bag(tv, f'daily.targetsByPhase.{ph}', errors, warns)
     sup = d.get('supplements', [])
     if not isinstance(sup, list) or len(sup) > 20: errors.append('daily.supplements must be a list of up to 20'); sup = []
     for i, s_ in enumerate(sup, 1):
@@ -152,6 +167,9 @@ def check_daily(d, errors, warns):
         if not isinstance(s_, dict) or not isinstance(s_.get('name'), str) or not s_['name'].strip(): errors.append(f'{w}: needs a "name"'); continue
         for k, n_ in (('name', 60), ('dose', 40), ('time', 20), ('id', 40)):
             if k in s_ and (not isinstance(s_[k], str) or len(s_[k]) > n_): errors.append(f'{w}: "{k}" must be a string up to {n_} chars')
+        if 'phase' in s_ and s_['phase'] not in PHASES: errors.append(f'{w}: "phase" must be {PHASE_MSG}')
+        for k in s_:
+            if k not in {'id', 'name', 'dose', 'time', 'phase'}: warns.append(f'{w}: unknown key "{k}" (ignored)')
     pd = d.get('photoDay')
     if pd is not None and not (isinstance(pd, int) and not isinstance(pd, bool) and 0 <= pd <= 6): errors.append('daily.photoDay must be 0-6 (0 = Sun) or null')
 
@@ -185,10 +203,10 @@ def main(argv):
         if k not in {'schema', 'version', 'updatedAt', 'message', 'phases', 'nutrition', 'options', 'prescriptions', 'meals', 'daily'}: warns.append(f'unknown top-level key "{k}" (ignored by the app)')
     nut = plan.get('nutrition')
     if nut is not None:
-        if not isinstance(nut, dict): errors.append('"nutrition" must be an object like {"bulk": {"kcal":..,"p":..,"c":..,"f":..}}')
+        if not isinstance(nut, dict): errors.append('"nutrition" must be an object like {"bulk": {"kcal":..,"p":..,"c":..,"f":..}} (phases: bulk, cut, recomp)')
         else:
             for ph, t in nut.items():
-                if ph not in PHASES: errors.append(f'nutrition.{ph}: unknown phase (use bulk or cut)'); continue
+                if ph not in PHASES: errors.append(f'nutrition.{ph}: unknown phase (use {PHASE_MSG})'); continue
                 if not isinstance(t, dict): errors.append(f'nutrition.{ph} must be an object'); continue
                 for k, hi in (('kcal', 10000), ('p', 1000), ('c', 2000), ('f', 1000)):
                     x = t.get(k)
@@ -242,7 +260,7 @@ def main(argv):
                 if up is None: warns.append(f'{w}: no "updated" date; the app cannot tell when it has been done and will keep showing it')
                 elif not isinstance(up, str) or not re.fullmatch(r'\d{4}-\d\d-\d\d', up): errors.append(f'{w}: "updated" must be "YYYY-MM-DD"')
                 ph = p.get('phase')
-                if ph is not None and ph not in PHASES: errors.append(f'{w}: "phase" must be bulk or cut')
+                if ph is not None and ph not in PHASES: errors.append(f'{w}: "phase" must be {PHASE_MSG}')
                 if data_ids is not None and key not in all_ids:
                     nm = (p.get('name') or key).strip().lower()
                     if nm in names: warns.append(f'{w}: not an exercise id; matched by name')
@@ -254,7 +272,7 @@ def main(argv):
         errors.append('"phases" must be a non-empty object')
         phases = {}
     for ph, groups in phases.items():
-        if ph not in PHASES: errors.append(f'phases.{ph}: unknown phase (use bulk or cut)'); continue
+        if ph not in PHASES: errors.append(f'phases.{ph}: unknown phase (use {PHASE_MSG})'); continue
         if not isinstance(groups, dict): errors.append(f'phases.{ph} must be an object'); continue
         for g, focuses in groups.items():
             if g not in FOCUSES: errors.append(f'{ph}.{g}: unknown body group (use {", ".join(FOCUSES)})'); continue

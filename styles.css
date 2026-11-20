@@ -202,24 +202,24 @@ svg.chart{width:100%;height:auto;display:block;touch-action:pan-y}
 .chip.toggle.on{background:color-mix(in srgb,var(--c) 22%,transparent);border-color:var(--c);color:var(--text)}
 .chip.static{color:var(--muted);border-style:dashed;display:inline-flex;align-items:center}
 
-/* v3: phases */
-.lead{font-size:16px;line-height:1.45;color:#c9cfdb;margin:2px 4px 18px}
-.phase-card{position:relative;overflow:hidden;width:100%;text-align:left;background:var(--card);border-radius:22px;padding:18px;border:1.5px solid rgba(255,255,255,.05);transition:transform .12s}
+/* v3: phases — accent comes from --c (Bulk #ff6b35, Cut #2ec4ff, Body Recomp #d2f34c) */
+.lead{font-size:16px;line-height:1.45;color:#c9cfdb;margin:2px 4px 14px}
+.phase-card{position:relative;overflow:hidden;width:100%;text-align:left;background:var(--card);border-radius:22px;padding:14px 16px 12px;border:1.5px solid rgba(255,255,255,.05);transition:transform .12s}
 .phase-card::before{content:"";position:absolute;inset:0;background:radial-gradient(110% 90% at 100% 0%,color-mix(in srgb,var(--c) 30%,transparent),transparent 60%);pointer-events:none}
 .phase-card:active{transform:scale(.98)}
 .phase-card.current{border-color:var(--c)}
 .ph-top{position:relative;display:flex;align-items:center;gap:14px}
 .ph-top>div{flex:1}
-.ph-ico{width:52px;height:52px;border-radius:16px;display:grid;place-items:center;font-size:28px;background:color-mix(in srgb,var(--c) 20%,transparent)}
-.ph-name{font-size:24px;font-weight:800;letter-spacing:-.01em}
+.ph-ico{width:46px;height:46px;border-radius:14px;display:grid;place-items:center;font-size:24px;background:color-mix(in srgb,var(--c) 20%,transparent)}
+.ph-name{font-size:22px;font-weight:800;letter-spacing:-.01em}
 .ph-tag{font-size:14px;color:var(--c);font-weight:700;margin-top:2px}
-.phase-card ul{position:relative;margin:14px 0 0;padding:0 0 0 18px;color:#c9cfdb;font-size:14.5px;line-height:1.6}
-.pill.phase{background:color-mix(in srgb,var(--c) 20%,transparent);color:var(--c);font-size:11px;padding:3px 8px;vertical-align:middle;margin-left:4px}
+.phase-card ul{position:relative;margin:10px 0 0;padding:0 0 0 18px;color:#c9cfdb;font-size:14px;line-height:1.45}
+.pill.phase{background:color-mix(in srgb,var(--c) 20%,transparent);color:var(--c);font-size:11px;padding:3px 8px;vertical-align:middle;margin-left:4px;white-space:nowrap}
 .phase-chip{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:linear-gradient(120deg,color-mix(in srgb,var(--c) 22%,var(--card)),var(--card) 70%);border:1px solid color-mix(in srgb,var(--c) 35%,transparent);border-radius:18px;padding:12px 14px;margin-bottom:12px}
 .phase-chip:active{opacity:.85}
 .pc-ico{font-size:24px}
 .pc-main{flex:1;display:flex;flex-direction:column}
-.pc-main b{font-size:17px}
+.pc-main b{font-size:17px;line-height:1.2}
 .pc-main span{font-size:12.5px;color:var(--muted);margin-top:2px}
 .pc-chg{font-size:14px;font-weight:700;color:var(--c)}
 .phase-tip{font-size:13.5px;color:#c9cfdb;background:color-mix(in srgb,var(--c) 10%,var(--card));border-left:3px solid var(--c);border-radius:12px;padding:10px 12px;margin-bottom:12px;line-height:1.4}
