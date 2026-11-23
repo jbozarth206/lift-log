@@ -9,7 +9,7 @@ const GROUPS = [
   {id:'arms', name:'Arms', color:'#ffc145', icon:'<path d="M5 18c1-5 3-8 6-10l2-3 3 1-1 4c2 1 3 3 3 5 0 2-2 4-5 4H8" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>'}
 ];
 const ARM_HOSTS = ['back', 'chest']; // groups that get arm finishers (biceps on back, triceps on chest)
-const APP_VERSION = '8.3';
+const APP_VERSION = '8.4';
 const SEED_PLAN_VERSION = 1; // plan.json v1 == built-in defaults
 const PHASE_DAYS = 28;
 const PHASES = {
@@ -177,7 +177,7 @@ function normLabs(l){
   for (const k of ['source', 'connectedAt', 'lastSync']) if (!(k in l)) l[k] = null;
   return l;
 }
-const emptyFood = () => ({entries: [], favorites: [], targets: {kcal: null, p: null, c: null, f: null}, targetsSource: 'coach'});
+const emptyFood = () => ({entries: [], favorites: [], custom: [], targets: {kcal: null, p: null, c: null, f: null}, targetsSource: 'coach'});
 function normPeds(p){
   p = p && typeof p === 'object' ? p : {};
   for (const k of ['compounds', 'doses', 'labs']) if (!Array.isArray(p[k])) p[k] = [];
@@ -185,7 +185,7 @@ function normPeds(p){
 }
 function normFood(f){
   f = f && typeof f === 'object' ? f : {};
-  for (const k of ['entries', 'favorites']) if (!Array.isArray(f[k])) f[k] = [];
+  for (const k of ['entries', 'favorites', 'custom']) if (!Array.isArray(f[k])) f[k] = [];
   f.targets = Object.assign({kcal: null, p: null, c: null, f: null}, f.targets || {});
   if (!['coach', 'manual'].includes(f.targetsSource)) f.targetsSource = 'coach';
   if (!f.adherence || typeof f.adherence !== 'object' || Array.isArray(f.adherence)) f.adherence = {};
@@ -279,6 +279,8 @@ function migrate(d){
   }
   // App 8.3 adds form demos. They are resolved from the exercise name (and an optional plan `demo`
   // field) at render time, so the stored log is not migrated and nothing already saved is rewritten.
+  // App 8.4 adds the common-foods picker (foods-data.js). Saved foods live in food.custom, which
+  // normFood creates when missing. Entries may gain optional foodId and lib. Version stays 13.
   if (!d.habits || typeof d.habits !== 'object' || Array.isArray(d.habits)) d.habits = {};
   if (!Array.isArray(d.photos)) d.photos = [];
   for (const ph of Object.keys(PHASES)) { d.plans[ph] = d.plans[ph] || {}; for (const g of GROUPS) if (!d.plans[ph][g.id]) d.plans[ph][g.id] = buildPlan(ph, g.id, d.exercises); }
@@ -1518,36 +1520,217 @@ function renderFood(el){
   if ($('#editTargets')) $('#editTargets').onclick = targetsSheet;
   bindMealPlan(el);
 }
+const FOOD_FILTERS = [['all','All'],['recent','Recent'],['fav','Favorites'],['mine','My foods'],['pizza','Pizza'],['fast-food','Fast food'],['mexican','Mexican'],['sandwich','Subs'],['grocery','Grocery'],['snack','Snacks'],['drink','Drinks'],['gym','Gym']];
+const scaleFood = (food, mult) => {
+  if (window.foodScale) return window.foodScale(food, mult);
+  const m = Number(mult) || 0, r1 = n => Math.round((Number(n) || 0) * m * 10) / 10;
+  return {p: r1(food.p), c: r1(food.c), f: r1(food.f), kcal: Math.round((Number(food.kcal) || 0) * m)};
+};
+const qtyFood = (food, mult) => window.foodQty ? window.foodQty(food, mult) : food.srv;
+const normQ = s => window.foodNorm ? window.foodNorm(s) : String(s || '').toLowerCase();
+function mealLabel(id){ return MEALS.find(x => x[0] === id)[1]; }
+function customAsFoods(){
+  return (db.food.custom || []).map(f => ({id: f.id, name: f.name, srv: f.srv || f.qty || '1 serving', g: f.g || null,
+    p: f.p || 0, c: f.c || 0, f: f.f || 0, kcal: f.kcal != null ? f.kcal : kcalOf(f), cat: 'mine', mine: true, fromLib: true}));
+}
+function catalogFoods(){ return (window.FOOD_DB || []).map(f => Object.assign({fromLib: true}, f)).concat(customAsFoods()); }
+function favAsFoods(){
+  return db.food.favorites.map(f => ({id: f.foodId || null, name: f.name, srv: f.qty || f.srv || '1 serving', g: f.g || null,
+    p: f.p || 0, c: f.c || 0, f: f.f || 0, kcal: kcalOf(f), fromLib: !!f.foodId}));
+}
+function recentPicks(){
+  return recentFoods().map(en => {
+    const base = en.lib && en.lib.srv ? {id: en.lib.id || en.foodId || null, name: en.name, srv: en.lib.srv, g: en.lib.g || null,
+      p: en.lib.p || 0, c: en.lib.c || 0, f: en.lib.f || 0, kcal: en.lib.kcal != null ? en.lib.kcal : kcalOf(en),
+      fromLib: !!(en.lib.id || en.foodId), openServings: en.lib.servings || 1} : {id: en.foodId || null, name: en.name, srv: en.qty || '1 serving', g: null,
+      p: en.p || 0, c: en.c || 0, f: en.f || 0, kcal: kcalOf(en), fromLib: !!en.foodId};
+    return {food: base, title: en.name, sub: `${en.qty ? en.qty + ' · ' : ''}${fmtNum(kcalOf(en))} kcal`, kcal: kcalOf(en)};
+  });
+}
 function foodSheet(e, meal){
-  const fav = db.food.favorites, rec = recentFoods().filter(r => !fav.some(f => lc(f.name) === lc(r.name)));
+  const fav = db.food.favorites;
   let sel = e ? e.meal : meal;
+  let filter = 'all';
+  let picked = null;
+  let mult = 1;
   const val = k => e && e[k] != null ? e[k] : '';
   openSheet(`<h2>${e ? 'Edit food' : 'Add food'}</h2>
-    <div class="seg" id="mealSeg">${MEALS.map(([m, l]) => `<button data-m="${m}" class="${sel === m ? 'on' : ''}">${l}</button>`).join('')}</div>
-    ${!e && (fav.length || rec.length) ? `
-      ${fav.length ? `<label class="form-label">★ Favorites</label><div class="chips">${fav.map((f, i) => `<button class="chip" data-fav="${i}">★ ${esc(f.name)} <small>${fmtNum(kcalOf(f))}</small></button>`).join('')}</div>` : ''}
-      ${rec.length ? `<label class="form-label">Recent</label><div class="chips">${rec.map((f, i) => `<button class="chip" data-rec="${i}">${esc(f.name)} <small>${fmtNum(kcalOf(f))}</small></button>`).join('')}</div>` : ''}` : ''}
-    <label class="form-label">Food</label><input class="text-input" id="fName" maxlength="80" value="${esc(val('name'))}" placeholder="e.g. Chicken breast" autocomplete="off">
-    <label class="form-label">Quantity</label><input class="text-input" id="fQty" maxlength="40" value="${esc(val('qty'))}" placeholder="e.g. 200 g, 1 cup, 2 eggs">
-    <div class="four" style="margin-top:4px">
-      <div><label class="form-label">kcal</label><input class="text-input" id="fKcal" type="number" inputmode="decimal" value="${val('kcal')}" placeholder="auto"></div>
-      <div><label class="form-label">Protein g</label><input class="text-input" id="fP" type="number" inputmode="decimal" value="${val('p')}"></div>
-      <div><label class="form-label">Carbs g</label><input class="text-input" id="fC" type="number" inputmode="decimal" value="${val('c')}"></div>
-      <div><label class="form-label">Fat g</label><input class="text-input" id="fF" type="number" inputmode="decimal" value="${val('f')}"></div>
+    <div class="seg" id="mealSeg">${MEALS.map(([m, l]) => `<button type="button" data-m="${m}" class="${sel === m ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <div id="foodBrowse" class="${e ? 'hidden' : ''}">
+      <div class="food-search"><input class="text-input" id="foodQ" type="search" enterkeyhint="search" placeholder="Search foods, e.g. pepperoni pizza" autocomplete="off" autocapitalize="off" autocorrect="off" aria-label="Search foods"></div>
+      <div class="chip-scroll" id="foodChips">${FOOD_FILTERS.map(([k, l]) => `<button type="button" class="chip${k === 'all' ? ' on' : ''}" data-filter="${k}">${l}</button>`).join('')}</div>
+      <div id="foodHits"></div>
+      <div class="btn-row"><button type="button" class="btn small" id="foodManualBtn">Enter macros manually</button></div>
     </div>
-    <label class="check"><input type="checkbox" id="fFav" ${e && fav.some(f => lc(f.name) === lc(e.name)) ? 'checked' : ''}> ★ Save to favorites</label>
-    <p class="note">Leave kcal blank to calculate it from macros (4/4/9).</p>
-    <div class="btn-row" style="margin-top:12px"><button class="btn primary" id="fSave">${e ? 'Save changes' : 'Add to ' + MEALS.find(x => x[0] === sel)[1]}</button></div>
-    ${e ? `<div class="btn-row"><button class="btn small danger" id="fDel">Delete</button></div>` : ''}
-    <div class="btn-row"><button class="btn small" id="fCancel">Cancel</button></div>`);
-  $('#fCancel').onclick = closeSheet;
-  $('#sheet').querySelectorAll('#mealSeg button').forEach(b => b.onclick = () => {
-    sel = b.dataset.m; $('#sheet').querySelectorAll('#mealSeg button').forEach(x => x.classList.toggle('on', x === b));
-    if (!e) $('#fSave').textContent = 'Add to ' + MEALS.find(x => x[0] === sel)[1];
+    <div id="foodAmount" class="hidden"></div>
+    <div id="foodManual" class="${e ? '' : 'hidden'}">
+      ${e ? `<div class="btn-row"><button type="button" class="btn small" id="foodSearchBtn">Search foods</button></div>` : `<div class="btn-row"><button type="button" class="btn small" id="foodBackSearch">Back to search</button></div>`}
+      <label class="form-label">Food</label><input class="text-input" id="fName" maxlength="80" value="${esc(val('name'))}" placeholder="e.g. Chicken breast" autocomplete="off">
+      <label class="form-label">Quantity</label><input class="text-input" id="fQty" maxlength="40" value="${esc(val('qty'))}" placeholder="e.g. 200 g, 1 cup, 2 eggs">
+      <div class="four" style="margin-top:4px">
+        <div><label class="form-label">kcal</label><input class="text-input" id="fKcal" type="number" inputmode="decimal" value="${val('kcal')}" placeholder="auto"></div>
+        <div><label class="form-label">Protein g</label><input class="text-input" id="fP" type="number" inputmode="decimal" value="${val('p')}"></div>
+        <div><label class="form-label">Carbs g</label><input class="text-input" id="fC" type="number" inputmode="decimal" value="${val('c')}"></div>
+        <div><label class="form-label">Fat g</label><input class="text-input" id="fF" type="number" inputmode="decimal" value="${val('f')}"></div>
+      </div>
+      <label class="check"><input type="checkbox" id="fFav" ${e && fav.some(f => lc(f.name) === lc(e.name)) ? 'checked' : ''}> ★ Save to favorites</label>
+      <label class="check"><input type="checkbox" id="fMine"> Save to my foods</label>
+      <p class="note">Leave kcal blank to calculate it from macros (4/4/9). Saved foods show up in search later.</p>
+      <div class="btn-row" style="margin-top:12px"><button type="button" class="btn primary" id="fSave">${e ? 'Save changes' : 'Add to ' + mealLabel(sel)}</button></div>
+      ${e ? `<div class="btn-row"><button type="button" class="btn small danger" id="fDel">Delete</button></div>` : ''}
+      <div class="btn-row"><button type="button" class="btn small" id="fCancel">Cancel</button></div>
+    </div>`);
+  const mealName = () => mealLabel(sel);
+  const show = id => { for (const k of ['foodBrowse', 'foodAmount', 'foodManual']) { const n = $('#' + k); if (n) n.classList.toggle('hidden', k !== id); } };
+  const syncMealButtons = () => {
+    $('#sheet').querySelectorAll('#mealSeg button').forEach(x => x.classList.toggle('on', x.dataset.m === sel));
+    if ($('#fSave') && !e) $('#fSave').textContent = 'Add to ' + mealName();
+    if ($('#foodAdd')) $('#foodAdd').textContent = (e ? 'Save to ' : 'Add to ') + mealName();
+  };
+  $('#sheet').querySelectorAll('#mealSeg button').forEach(b => b.onclick = () => { sel = b.dataset.m; syncMealButtons(); });
+  function commit(item){
+    if (!item.name) { toast('Enter a food name'); return; }
+    if (e) {
+      if (!item.foodId) delete e.foodId;
+      if (!item.lib) delete e.lib;
+      Object.assign(e, item, {meal: sel});
+      if (e.plan) e.plan.status = sameFood(item, e.plan.orig || {}) ? 'as-planned' : 'edited';
+    } else db.food.entries.push({id: uid(), date: foodDate, meal: sel, ...item});
+    recomputeAdherence(e ? e.date : foodDate);
+    save(); closeSheet(); render(); toast(e ? 'Updated' : `✓ Added ${fmtNum(item.kcal)} kcal`);
+  }
+  function hitButton(title, sub, kcal, extra){
+    return `<button type="button" class="food-hit" data-pick="1"><span class="grow"><span class="nm">${esc(title)}</span><span class="sub">${esc(sub)}</span></span>${extra || ''}<span class="kc">${fmtNum(kcal)}<small> kcal</small></span></button>`;
+  }
+  function renderHits(){
+    const box = $('#foodHits');
+    if (!box) return;
+    const q = $('#foodQ') ? $('#foodQ').value : '';
+    let rows = [];
+    if (filter === 'recent') {
+      const nq = normQ(q);
+      rows = recentPicks().filter(r => !nq || normQ(r.title + ' ' + r.sub).includes(nq)).slice(0, 40);
+    } else if (filter === 'fav') {
+      rows = (window.foodSearch ? window.foodSearch(q, favAsFoods()) : favAsFoods()).slice(0, 40).map(f => ({food: f, title: f.name, sub: `${f.srv} · ${fmtNum(f.kcal)} kcal`, kcal: f.kcal}));
+    } else if (filter === 'mine') {
+      const mine = window.foodSearch ? window.foodSearch(q, customAsFoods()) : customAsFoods();
+      rows = mine.slice(0, 40).map(f => ({food: f, title: f.name, sub: `${f.srv} · ${fmtNum(f.kcal)} kcal`, kcal: f.kcal, remove: f.id}));
+    } else {
+      const list = catalogFoods().filter(f => filter === 'all' || f.cat === filter);
+      const found = window.foodSearch ? window.foodSearch(q, list) : (q ? [] : list);
+      rows = found.slice(0, 40).map(f => ({food: f, title: f.name, sub: `${f.srv} · ${fmtNum(f.kcal)} kcal`, kcal: f.kcal}));
+    }
+    if (!rows.length) {
+      const empty = filter === 'recent' ? 'Foods you log show up here.' : filter === 'fav' ? 'Star a food and it stays here.' : filter === 'mine' ? 'Save a food from manual entry to pick it again.' : (q ? 'No match. Try another name, or enter macros.' : 'Search the food list.');
+      box.innerHTML = `<p class="note">${empty}</p>`;
+      return;
+    }
+    box.innerHTML = rows.map(r => {
+      const x = r.remove ? `<span class="food-x" data-x="${esc(r.remove)}" role="button" aria-label="Remove ${esc(r.title)}">✕</span>` : '';
+      return hitButton(r.title, r.sub, r.kcal, x);
+    }).join('');
+    box.querySelectorAll('[data-pick]').forEach((b, i) => b.onclick = ev => {
+      if (ev.target.closest('[data-x]')) return;
+      showAmount(rows[i].food);
+    });
+    box.querySelectorAll('[data-x]').forEach(b => b.onclick = ev => {
+      ev.stopPropagation();
+      db.food.custom = db.food.custom.filter(f => f.id !== b.dataset.x);
+      save(); renderHits(); toast('Removed from my foods');
+    });
+  }
+  function updatePreview(){
+    if (!picked) return;
+    const scaled = scaleFood(picked, mult);
+    $('#pvK').textContent = fmtNum(scaled.kcal);
+    $('#pvP').textContent = fmtNum(scaled.p);
+    $('#pvC').textContent = fmtNum(scaled.c);
+    $('#pvF').textContent = fmtNum(scaled.f);
+    const presets = [0.5, 1, 1.5, 2];
+    $('#sheet').querySelectorAll('#srvRow button').forEach(b => {
+      const presetOn = b.dataset.s !== 'custom' && presets.some(p => Math.abs(p - mult) < 0.02 && String(p) === b.dataset.s);
+      const customOn = b.dataset.s === 'custom' && !presets.some(p => Math.abs(p - mult) < 0.02);
+      b.classList.toggle('on', presetOn || customOn);
+    });
+    const custom = $('#srvCustom');
+    if (custom) custom.classList.toggle('hidden', presets.some(p => Math.abs(p - mult) < 0.02));
+    if ($('#foodAdd')) $('#foodAdd').textContent = (e ? 'Save to ' : 'Add to ') + mealName();
+  }
+  function showAmount(food){
+    picked = food;
+    mult = food.openServings && food.openServings > 0 ? food.openServings : 1;
+    let gramTouch = false;
+    const starred = fav.some(f => lc(f.name) === lc(food.name));
+    const presets = [['0.5','½'],['1','1'],['1.5','1½'],['2','2']];
+    $('#foodAmount').innerHTML = `<div class="amt-top"><h3>${esc(food.name)}</h3><button type="button" class="chip${starred ? ' on' : ''}" id="foodStar">${starred ? '★' : '☆'} Favorite</button></div>
+      <p class="note" style="margin-top:6px">${esc(food.srv)}${food.g ? ' · ' + fmtNum(food.g) + ' g' : ''}</p>
+      <label class="form-label">Servings</label>
+      <div class="srv-row" id="srvRow">${presets.map(([v, l]) => `<button type="button" data-s="${v}">${l}</button>`).join('')}<button type="button" data-s="custom">Custom</button></div>
+      <input class="text-input hidden" id="srvCustom" type="number" inputmode="decimal" min="0.1" max="20" step="0.1" aria-label="Custom servings" placeholder="Servings">
+      ${food.g ? `<label class="form-label">Or weigh it</label><input class="text-input" id="foodGrams" type="number" inputmode="decimal" min="1" max="2000" step="1" aria-label="Grams">` : ''}
+      <div class="macro-read"><div><b id="pvK"></b><span>kcal</span></div><div><b id="pvP"></b><span>protein</span></div><div><b id="pvC"></b><span>carbs</span></div><div><b id="pvF"></b><span>fat</span></div></div>
+      <div class="btn-row" style="margin-top:14px"><button type="button" class="btn primary" id="foodAdd"></button></div>
+      <div class="btn-row"><button type="button" class="btn small" id="foodTweak">Tweak macros</button></div>
+      <div class="btn-row"><button type="button" class="btn small" id="foodBack">Back</button></div>`;
+    show('foodAmount');
+    const applyPreset = n => {
+      gramTouch = false; mult = n;
+      const g = $('#foodGrams'); if (g && food.g) g.value = String(Math.round(food.g * mult * 10) / 10);
+      updatePreview();
+    };
+    $('#sheet').querySelectorAll('#srvRow button').forEach(b => b.onclick = () => {
+      if (b.dataset.s === 'custom') {
+        $('#srvCustom').value = String(Math.round(mult * 100) / 100);
+        $('#srvCustom').classList.remove('hidden');
+        updatePreview();
+        $('#srvCustom').focus();
+        return;
+      }
+      applyPreset(+b.dataset.s);
+    });
+    if ($('#srvCustom')) $('#srvCustom').oninput = () => {
+      const n = parseFloat($('#srvCustom').value);
+      if (n > 0 && n <= 20) { gramTouch = false; mult = n; const g = $('#foodGrams'); if (g && food.g) g.value = String(Math.round(food.g * mult * 10) / 10); updatePreview(); }
+    };
+    if ($('#foodGrams')) {
+      $('#foodGrams').value = String(Math.round(food.g * mult * 10) / 10);
+      $('#foodGrams').oninput = () => { const g = parseFloat($('#foodGrams').value); if (g > 0 && food.g) { gramTouch = true; mult = g / food.g; updatePreview(); } };
+    }
+    $('#foodStar').onclick = () => {
+      const i = fav.findIndex(f => lc(f.name) === lc(food.name));
+      if (i >= 0) fav.splice(i, 1);
+      else fav.push({id: uid(), name: food.name, qty: food.srv, kcal: food.kcal, p: food.p, c: food.c, f: food.f, foodId: food.fromLib ? food.id : null, g: food.g || null});
+      save(); $('#foodStar').classList.toggle('on', i < 0); $('#foodStar').textContent = (i < 0 ? '★' : '☆') + ' Favorite';
+    };
+    $('#foodBack').onclick = () => show('foodBrowse');
+    $('#foodTweak').onclick = () => {
+      const scaled = scaleFood(food, mult);
+      $('#fName').value = food.name; $('#fQty').value = gramTouch && $('#foodGrams') ? (fmtNum(parseFloat($('#foodGrams').value)) + ' g') : qtyFood(food, mult);
+      $('#fKcal').value = scaled.kcal; $('#fP').value = scaled.p; $('#fC').value = scaled.c; $('#fF').value = scaled.f;
+      show('foodManual');
+    };
+    $('#foodAdd').onclick = () => {
+      if (!(mult > 0) || mult > 20) { toast('Enter a serving size'); return; }
+      const scaled = scaleFood(picked, mult);
+      const qty = gramTouch && $('#foodGrams') ? (fmtNum(parseFloat($('#foodGrams').value)) + ' g') : qtyFood(picked, mult);
+      const item = {name: picked.name, qty, kcal: scaled.kcal, p: scaled.p, c: scaled.c, f: scaled.f};
+      if (picked.fromLib && picked.id) item.foodId = picked.id;
+      item.lib = {id: picked.id || null, srv: picked.srv, g: picked.g || null, p: picked.p, c: picked.c, f: picked.f, kcal: picked.kcal, servings: Math.round(mult * 100) / 100};
+      commit(item);
+    };
+    applyPreset(mult);
+  }
+  $('#foodQ').oninput = renderHits;
+  $('#foodQ').addEventListener('keydown', ev => { if (ev.key === 'Enter') ev.preventDefault(); });
+  $('#sheet').querySelectorAll('#foodChips button').forEach(b => b.onclick = () => {
+    filter = b.dataset.filter;
+    $('#sheet').querySelectorAll('#foodChips button').forEach(x => x.classList.toggle('on', x === b));
+    renderHits();
   });
-  const fill = f => { $('#fName').value = f.name; $('#fQty').value = f.qty || ''; $('#fKcal').value = f.kcal ?? ''; $('#fP').value = f.p ?? ''; $('#fC').value = f.c ?? ''; $('#fF').value = f.f ?? ''; $('#fFav').checked = fav.some(x => lc(x.name) === lc(f.name)); };
-  $('#sheet').querySelectorAll('[data-fav]').forEach(b => b.onclick = () => fill(fav[+b.dataset.fav]));
-  $('#sheet').querySelectorAll('[data-rec]').forEach(b => b.onclick = () => fill(rec[+b.dataset.rec]));
+  $('#foodManualBtn').onclick = () => show('foodManual');
+  if ($('#foodBackSearch')) $('#foodBackSearch').onclick = () => show('foodBrowse');
+  if ($('#foodSearchBtn')) $('#foodSearchBtn').onclick = () => show('foodBrowse');
+  $('#fCancel').onclick = closeSheet;
   $('#fSave').onclick = () => {
     const name = $('#fName').value.trim();
     if (!name) { toast('Enter a food name'); return; }
@@ -1555,15 +1738,19 @@ function foodSheet(e, meal){
     let kcal = numOrNull($('#fKcal').value, 10000);
     if (kcal == null) kcal = Math.round(4 * (p || 0) + 4 * (c || 0) + 9 * (f || 0));
     const item = {name, qty: $('#fQty').value.trim(), kcal, p: p || 0, c: c || 0, f: f || 0};
-    if (e) { Object.assign(e, item, {meal: sel}); if (e.plan) e.plan.status = sameFood(item, e.plan.orig || {}) ? 'as-planned' : 'edited'; }
-    else db.food.entries.push({id: uid(), date: foodDate, meal: sel, ...item});
     const fi = fav.findIndex(x => lc(x.name) === lc(name));
     if ($('#fFav').checked) { if (fi >= 0) Object.assign(fav[fi], item); else fav.push({id: uid(), ...item}); }
     else if (fi >= 0) fav.splice(fi, 1);
-    recomputeAdherence(e ? e.date : foodDate);
-    save(); closeSheet(); render(); toast(e ? 'Updated' : `✓ Added ${fmtNum(kcal)} kcal`);
+    if ($('#fMine').checked) {
+      const row = {name, srv: item.qty || '1 serving', kcal, p: item.p, c: item.c, f: item.f};
+      const i = db.food.custom.findIndex(x => lc(x.name) === lc(name));
+      if (i >= 0) Object.assign(db.food.custom[i], row); else db.food.custom.push({id: uid(), ...row});
+    }
+    commit(item);
   };
   if ($('#fDel')) $('#fDel').onclick = () => { db.food.entries = db.food.entries.filter(x => x !== e); recomputeAdherence(e.date); save(); closeSheet(); render(); toast('Deleted'); };
+  renderHits();
+  if (!e) setTimeout(() => { const q = $('#foodQ'); if (q) q.focus(); }, 280);
 }
 function targetsSheet(){
   const coachT = db.coach.nutrition && db.coach.nutrition[curPhase()], m = db.food.targets;
