@@ -1,7 +1,9 @@
-const CACHE = 'liftlog-v8-3';
+const CACHE = 'liftlog-v8-4';
 const ASSETS = ['./', './index.html', './styles.css', './app.js', './demos.js', './assets/demos/catalog.js',
-  './styles.css?v=83', './app.js?v=83', './demos.js?v=83', './assets/demos/catalog.js?v=83',
-  './mychart.js', './mychart.config.js', './mychart.js?v=83', './mychart.config.js?v=83', './manifest.webmanifest',
+  './foods-data.js', './foods.js',
+  './styles.css?v=84', './app.js?v=84', './demos.js?v=84', './assets/demos/catalog.js?v=84',
+  './foods-data.js?v=84', './foods.js?v=84',
+  './mychart.js', './mychart.config.js', './mychart.js?v=84', './mychart.config.js?v=84', './manifest.webmanifest',
   './icons/apple-touch-icon.png', './icons/icon-192.png', './icons/icon-512.png'];
 // Form-demo frames (assets/demos/*.webp) are not precached. The fetch handler below
 // runtime-caches them on first view so a gym with no signal still has the ones already opened.

@@ -528,3 +528,27 @@ body.has-rest #toast{bottom:calc(var(--tabh) + var(--sab) + 112px)}
 .demo-cues li{margin:4px 0;font-size:15px;line-height:1.35}
 .demo-note{margin:10px 0 0;font-size:13px;color:#c4cad6;line-height:1.4}
 .demo-credit{margin:12px 0 0;font-size:11px;color:#6d7688}
+
+/* v8.4: common foods picker */
+.food-search{position:sticky;top:0;z-index:2;background:#141821;padding:2px 0 8px}
+.chip-scroll{display:flex;gap:8px;overflow-x:auto;padding:2px 0 10px;margin:0 -2px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.chip-scroll::-webkit-scrollbar{display:none}
+.chip-scroll .chip{flex:none}
+.food-hit{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:var(--card);border:1px solid rgba(255,255,255,.04);border-radius:16px;padding:12px;margin:0 0 8px;min-height:64px}
+.food-hit:active{background:var(--card2)}
+.food-hit .grow{flex:1;min-width:0}
+.food-hit .nm{display:block;font-weight:800;font-size:16px;line-height:1.25}
+.food-hit .sub{display:block;color:var(--muted);font-size:13px;font-weight:600;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.food-hit .kc{font-weight:800;font-size:16px;text-align:right;white-space:nowrap}
+.food-x{width:36px;height:36px;border-radius:10px;color:var(--muted);font-size:16px;flex:none}
+.food-x:active{background:var(--card2);color:var(--red)}
+.srv-row{display:flex;gap:8px}
+.srv-row button{flex:1;min-height:48px;border-radius:14px;background:var(--card2);border:1.5px solid var(--line);font-weight:800;font-size:16px}
+.srv-row button.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 16%,transparent)}
+.macro-read{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:14px}
+.macro-read div{background:var(--card);border-radius:14px;padding:10px 4px;text-align:center}
+.macro-read b{display:block;font-size:18px;font-variant-numeric:tabular-nums}
+.macro-read span{color:var(--muted);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+.amt-top{display:flex;align-items:flex-start;gap:8px}
+.amt-top h3{flex:1;margin:0;font-size:20px;line-height:1.25}
+#srvCustom{margin-top:8px}

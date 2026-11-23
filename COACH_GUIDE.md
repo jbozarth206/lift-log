@@ -22,7 +22,7 @@ gh api 'repos/jbozarth206/lift-log-data/commits?path=data/liftlog.json&per_page=
 ### Data format (same as the app's backup export)
 ```jsonc
 {
-  "app": "liftlog", "appVersion": "8.3",
+  "app": "liftlog", "appVersion": "8.4",
   "exportedAt": "2026-11-11T18:40:00.000Z",      // when the phone pushed it
   "version": 13,                                  // data schema version (13 = app 8.2, adds settings.autoOpenWorkout; coach.schedule is the phone's copy of plan.json schedule)
   "phase": {"id": "bulk", "start": "2026-11-11"}, // current 4-week block (bulk|cut|recomp), null if not chosen yet
@@ -129,6 +129,7 @@ gh api 'repos/jbozarth206/lift-log-data/commits?path=data/liftlog.json&per_page=
 - **Body Recomp (app 8.1, phase id `recomp`)**: a third 4-week block. `phase.id` may be `"recomp"`, and sessions logged in it have `phase: "recomp"`. `plans.recomp` holds the same group/focus shape as bulk and cut. Upgrading from v8 / v8.0.1 (data version 11) adds `plans.recomp` from the built-in defaults and keeps workouts, exercises, Bulk/Cut plans, body, food, peds, labs, habits, and photos. The phone saves `liftlog.v1.backup-v11` before that upgrade.
 - **App 8.2 (data version 13)**: adds `settings.autoOpenWorkout` (default `true` when the key is missing) and reads `coach.schedule` from `plan.json`. Upgrading from v8.1 (data version 12) keeps workouts, exercises, Bulk/Cut/Recomp plans, body, food, peds, labs, habits, and photos. The phone saves `liftlog.v1.backup-v12` before that upgrade.
 - **App 8.3 (still data version 13)**: form demos on every workout card. Nothing in his log changes and no backup is written for this update. Pictures come from the app's catalog by exercise name. An optional `demo` on a plan exercise (slug, relative image, or https URL) overrides that match when you next publish a higher `version`. Schema: PLAN_SCHEMA.md › "Additions in app 8.3". Leave `demo` off for lifts he already has.
+- **App 8.4 (still data version 13)**: common-foods picker on Add food. The catalog is in the app (`foods-data.js`), not in his log. `food.custom` (missing means none) is foods he saved himself: `{id, name, srv, kcal, p, c, f}` and optional `g` (grams in one serving). An entry logged from the picker may also have `foodId` and `lib` (the one-serving base and the multiplier). Ignore those for totals; `name`, `qty`, `kcal`, `p`, `c`, and `f` are still the logged line. No backup is written for this update.
 - **Profile**: `profile.height` is in **inches** (e.g. 70 = 5′10″), or `null` if not set. BMI = `703 × weight / height²`.
 - **Meal-plan logging (app 8.0+)**: food entries logged from your meal plan carry `plan`:
   ```jsonc
